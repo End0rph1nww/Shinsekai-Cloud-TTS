@@ -13,7 +13,7 @@ import yaml
 PROVIDER_SLUG = "minimax-tts"
 PLUGIN_ID = "com.shinsekai.minimax_tts"
 PLUGIN_ENTRY = "plugins.minimax_tts.plugin:MinimaxTtsPlugin"
-PLUGIN_VERSION = "0.2.0"
+PLUGIN_VERSION = "0.2.1"
 
 # API 页面只保留连接凭证，避免和插件设置页重复展示行为参数。
 ADAPTER_CONFIG_KEYS = {

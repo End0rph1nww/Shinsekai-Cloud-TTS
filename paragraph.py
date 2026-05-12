@@ -109,7 +109,10 @@ class ParagraphOnlyCharacterTtsHandler(MessageHandler):
         speech_text = speech
         if translate:
             text_processor = None
+            # translate 已经是 MiniMax TTS 的输入，不能再走翻译流程；
+            # 但仍然复用主程序 name_map，修正角色名/专有名词读法。
             speech_text = rt.text_processor.remove_parentheses(translate)
+            speech_text = rt.text_processor.replace_names(speech_text)
 
         audio_path = ""
         if rt.tts_manager:
