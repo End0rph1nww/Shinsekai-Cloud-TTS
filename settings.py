@@ -42,7 +42,6 @@ class MinimaxTtsSettingsWidget(QWidget):
         self._characters: list[dict[str, Any]] = []
         self._voice_id_map: dict[str, str] = {}
         self._voice_id_versions: dict[str, list[dict[str, Any]]] = {}
-        self._previous_tts_provider = ""
         self._build_ui()
         self._load_values()
         self._reload_characters()
@@ -146,6 +145,10 @@ class MinimaxTtsSettingsWidget(QWidget):
         self.auto_clone.setChecked(False)
         synth_lay.addWidget(self._check_row(self.auto_clone))
 
+        self.paragraph_split = self._checkbox("Paragraph：按段落整段生成（不按标点切分）")
+        self.paragraph_split.setChecked(True)
+        synth_lay.addWidget(self._check_row(self.paragraph_split))
+
         self.request_timeout = self._spin()
         self.request_timeout.setRange(5, 600)
         self.request_timeout.setValue(120)
@@ -225,15 +228,12 @@ class MinimaxTtsSettingsWidget(QWidget):
         actions = QHBoxLayout()
         actions.setContentsMargins(12, 8, 12, 8)
         actions.setSpacing(12)
-        self.save_takeover_btn = QPushButton("保存设置并接管主程序 TTS")
-        self.save_takeover_btn.clicked.connect(lambda: self._save(take_over=True))
-        self.save_btn = QPushButton("只保存设置")
-        self.save_btn.clicked.connect(lambda: self._save(take_over=False))
-        for button in (self.save_takeover_btn, self.save_btn):
-            button.setFixedHeight(FIELD_HEIGHT)
-            button.setMinimumWidth(160)
-            button.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
-            actions.addWidget(button)
+        self.save_btn = QPushButton("保存配置")
+        self.save_btn.clicked.connect(self._save)
+        self.save_btn.setFixedHeight(FIELD_HEIGHT)
+        self.save_btn.setMinimumWidth(160)
+        self.save_btn.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        actions.addWidget(self.save_btn)
         actions.addStretch(1)
         foot_lay.addLayout(actions)
 
@@ -329,6 +329,19 @@ class MinimaxTtsSettingsWidget(QWidget):
         except (TypeError, ValueError):
             return default
 
+    def _as_bool(self, value: Any, default: bool) -> bool:
+        if isinstance(value, bool):
+            return value
+        if value is None:
+            return default
+        if isinstance(value, str):
+            text = value.strip().lower()
+            if text in {"1", "true", "yes", "on"}:
+                return True
+            if text in {"0", "false", "no", "off"}:
+                return False
+        return bool(value)
+
     def _load_values(self) -> None:
         state.migrate_package_config_to_data_root()
         state.migrate_api_extra_to_plugin_state(self._plugin_root)
@@ -346,7 +359,6 @@ class MinimaxTtsSettingsWidget(QWidget):
         self._set_combo(self.model, str(values.get("model") or "speech-2.8-hd"))
         self._voice_id_map = self._coerce_voice_id_map(values.get("voice_id_map"))
         self._voice_id_versions = self._coerce_voice_id_versions(values.get("voice_id_versions"))
-        self._previous_tts_provider = str(values.get("previous_tts_provider") or "").strip()
         self._ensure_versions_from_selected_map()
         self._refresh_default_voice_options(str(values.get("default_voice_id") or ""))
         self._set_combo(self.language_boost, str(values.get("language_boost") or "auto"))
@@ -359,6 +371,9 @@ class MinimaxTtsSettingsWidget(QWidget):
         self.vol.setValue(self._as_float(values.get("vol"), 1.0))
         self.pitch.setValue(self._as_int(values.get("pitch"), 0))
         self.auto_clone.setChecked(bool(values.get("auto_clone_from_reference", False)))
+        self.paragraph_split.setChecked(
+            self._as_bool(values.get("paragraph_split_enabled"), True)
+        )
         self.request_timeout.setValue(self._as_int(values.get("request_timeout"), 120))
         self.need_noise_reduction.setChecked(bool(values.get("need_noise_reduction", False)))
         self.need_volume_normalization.setChecked(
@@ -586,6 +601,7 @@ class MinimaxTtsSettingsWidget(QWidget):
             "pitch": int(self.pitch.value()),
             "emotion": str(self.emotion.currentData() or ""),
             "auto_clone_from_reference": self.auto_clone.isChecked(),
+            "paragraph_split_enabled": self.paragraph_split.isChecked(),
             "request_timeout": int(self.request_timeout.value()),
             "need_noise_reduction": self.need_noise_reduction.isChecked(),
             "need_volume_normalization": self.need_volume_normalization.isChecked(),
@@ -593,7 +609,6 @@ class MinimaxTtsSettingsWidget(QWidget):
                 self.voice_cache_path.text().strip()
                 or "cache/audio/minimax_voice_cache.json"
             ),
-            "previous_tts_provider": self._previous_tts_provider,
         }
 
     def _adapter(self) -> MiniMaxTTSAdapter:
@@ -603,27 +618,15 @@ class MinimaxTtsSettingsWidget(QWidget):
         values["use_runtime_config"] = False
         return MiniMaxTTSAdapter(**values)
 
-    def _save(self, *, take_over: bool) -> None:
+    def _save(self) -> None:
         values = self._values()
-        if take_over:
-            current_provider = state.current_tts_provider()
-            if current_provider.lower() != state.PROVIDER_SLUG:
-                self._previous_tts_provider = current_provider
-                values["previous_tts_provider"] = current_provider
-        # 插件页不写 API KEY/Base URL；接管按钮只负责切换主程序 TTS provider。
-        if take_over:
-            state.set_minimax_extra({}, take_over=True)
+        state.suppress_prompt_constraint()
+        # 插件页只保存 MiniMax 行为参数；实际 TTS 引擎由主菜单 API 页选择。
         state.save_plugin_config(self._plugin_root, values)
-        try:
-            from config.config_manager import ConfigManager
-
-            ConfigManager().reload()
-        except Exception:
-            pass
+        # 不刷新主 ConfigManager，避免插件页保存时连带触发模板页生成 Prompt。
         self.status.setText(
-            "已保存。"
-            + ("主程序 TTS 已切到 minimax-tts。" if take_over else "")
-            + " 如果主聊天进程已经启动，请重启聊天进程让 adapter 重新载入。"
+            "已保存配置。TTS 引擎请在主菜单 API 页选择；"
+            "如果主聊天进程已经启动，请重启聊天进程让 adapter 重新载入。"
         )
 
     def _import_voice_ids(self) -> None:
@@ -663,7 +666,7 @@ class MinimaxTtsSettingsWidget(QWidget):
             self._set_voice_combo_value(self.default_voice_id, default_voice_id)
         if current_character:
             self._refresh_character_voice_options(current_character)
-        self._save(take_over=False)
+        self._save()
 
         parts = []
         if imported:
@@ -838,7 +841,7 @@ class MinimaxTtsSettingsWidget(QWidget):
                 self._voice_id_map[name] = voice_id
                 self._refresh_character_voice_options(name)
                 self._refresh_default_voice_options()
-            self._save(take_over=True)
+            self._save()
             self.status.setText(f"上传完成，已绑定 {name or '当前角色'} 的 voice_id：{voice_id}")
         finally:
             self.upload_btn.setEnabled(True)

@@ -8,7 +8,7 @@ from sdk.register import PluginCapabilityRegistry
 from sdk.types import SettingsUIContribution
 
 from plugins.minimax_tts.adapter import MiniMaxTTSAdapter
-from plugins.minimax_tts import host_hook, prompt_hook, state
+from plugins.minimax_tts import host_hook, paragraph, prompt_hook, state
 
 
 class MinimaxTtsPlugin(PluginBase):
@@ -42,11 +42,14 @@ class MinimaxTtsPlugin(PluginBase):
         plugin_root: Path,
         host: PluginHostContext,
     ) -> None:
-        # SDK 尚未提供“插件被禁用”的事件；host_hook 只负责禁用时恢复 TTS provider。
+        # SDK 尚未提供“插件被禁用”的事件；host_hook 只负责禁用时清理失效的 MiniMax TTS 选择。
         host_hook.install()
         # SDK 也暂未提供模板钩子；prompt_hook 使用幂等 monkey patch 注入 MiniMax 语气约束。
         prompt_hook.install()
         register.register_tts_adapter(state.PROVIDER_SLUG, MiniMaxTTSAdapter)
+        register.register_message_handler(
+            tts_handler=paragraph.ParagraphOnlyCharacterTtsHandler()
+        )
 
         def _build_settings(ctx):
             from plugins.minimax_tts.settings import MinimaxTtsSettingsWidget

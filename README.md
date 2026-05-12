@@ -1,13 +1,13 @@
 # MiniMax TTS
 
-MiniMax speech-2.x 语音合成插件。它会向 Shinsekai 注册一个新的 TTS 引擎 `minimax-tts`，并提供独立的插件设置页，用于配置模型、声线克隆、voice_id 和合成参数。
+MiniMax speech-2.x 语音合成插件。它会向 Shinsekai 注册一个新的 TTS 引擎 `minimax-tts`，并提供独立的插件设置页，用于配置模型、声线克隆、voice_id、合成参数和 Paragraph 段落整段生成。
 
 ## 插件信息
 
 | 字段 | 内容 |
 | --- | --- |
 | 插件 ID | `com.shinsekai.minimax_tts` |
-| 版本 | `0.1.0` |
+| 版本 | `0.2.0` |
 | 作者 | `End0rph1nww` |
 | 插件入口 | `plugins.minimax_tts.plugin:MinimaxTtsPlugin` |
 | TTS 引擎标识 | `minimax-tts` |
@@ -17,12 +17,13 @@ MiniMax speech-2.x 语音合成插件。它会向 Shinsekai 注册一个新的 T
 
 - 通过 `register_tts_adapter` 注册 `minimax-tts` TTS 适配器。
 - 主菜单的 API 设置页只显示 `MiniMax API KEY` 和 `MiniMax Base URL`。
-- MiniMax 的模型、voice_id、合成参数、声线克隆参数和本地声线缓存，都放在插件设置页维护。
+- MiniMax 的模型、voice_id、合成参数、Paragraph 段落整段生成、声线克隆参数和本地声线缓存，都放在插件设置页维护。
 - 支持 MiniMax `/t2a_v2`、`/files/upload` 和 `/voice_clone` 接口。
 - voice_id 查找顺序为：角色绑定 voice_id、默认兜底 voice_id、已缓存的克隆 voice_id、可选的角色参考音频自动克隆。
-- 如果希望 MiniMax 对较长台词按段落整段生成，推荐同时启用 `TTS Paragraph Split` 插件；本插件只提供 MiniMax TTS 引擎，不改变 Shinsekai 默认的标点切分逻辑。
+- 内置 Paragraph 开关。开启后，普通角色台词只按换行或空行分段，不再按标点拆句，适合让 MiniMax 对较长台词按段落整段生成。
 - 只有当插件启用，并且主程序当前 TTS 引擎已经切到 `minimax-tts` 时，插件才会向模板注入 MiniMax 语气标签约束。
-- 当用户在插件面板禁用本插件时，插件会尝试把主程序 TTS 引擎恢复到接管前的值。
+- 是否使用 MiniMax 作为主 TTS 引擎，完全由主菜单 API 设置页里的 TTS 引擎选择决定；插件设置页只保存插件行为参数。
+- 当用户在插件面板禁用本插件时，`minimax-tts` 不再注册到主菜单 TTS 列表；如果当前主 TTS 仍是 `minimax-tts`，插件会把它清为 `none`，避免下次启动留下失效入口。
 
 ## 安装方式
 
@@ -115,15 +116,15 @@ tts_extra_configs:
 - 音频格式：`wav`、`mp3` 或 `flac`。
 - 采样率、比特率、声道、语速、音量、音高、默认情绪和请求超时。
 - 未找到 voice_id 时，是否从角色参考音频自动克隆。
+- Paragraph：是否按段落整段生成。默认开启；关闭后会回到 Shinsekai 内置的按标点切分行为。
 - 克隆时是否启用降噪、音量归一。
 - 自动克隆缓存路径，默认是 `cache/audio/minimax_voice_cache.json`。
 
-插件页底部有两个保存按钮：
+插件页底部只有一个 `保存配置` 按钮。点击后只会保存插件行为参数，不会修改主菜单 API 设置页里的 `tts_provider`。
 
-- `只保存设置`：只保存插件行为参数，不改变主程序当前 TTS 引擎。
-- `保存设置并接管主程序 TTS`：保存插件行为参数，并把主程序 TTS 引擎切换为 `minimax-tts`。
+MiniMax 是否成为主程序实际使用的 TTS 引擎，由主菜单 API 设置页保存后的 TTS 引擎状态决定。也就是说：在主菜单选择 `minimax-tts` 并点击保存后，当前系统提示词和后续生成的模板会自动加入 MiniMax 语气标签约束；如果主菜单切换到 GPT-SoVITS、Genie TTS 或 `none` 并点击保存，当前系统提示词里的 MiniMax 语气标签约束会自动移除。插件设置页保存不会修改主 TTS 选择，也不会触发系统提示词注入。
 
-只有点击 `保存设置并接管主程序 TTS` 后，MiniMax 才会成为主程序实际使用的 TTS 引擎。此时 MiniMax 语气标签约束也会开始生效。
+Paragraph 段落整段生成只需要插件启用并打开 Paragraph 开关，不要求主程序 TTS 已切换到 `minimax-tts`。因此它也可以配合本地 TTS 引擎使用；推荐和 MiniMax 一起使用时打开，让较长台词按段落整段生成。
 
 如果主聊天进程已经启动，保存后请重启聊天进程，让 TTS adapter 重新读取最新配置。
 
@@ -172,7 +173,8 @@ data/plugins/com.shinsekai.minimax_tts/voices/_defaults.json
 - 默认情况下，合成音频会写入 `cache/audio/`，除非主程序传入了明确的输出路径。
 - adapter 会从主程序 API 设置中的 `tts_extra_configs.minimax-tts` 读取 API KEY 和 Base URL。
 - 插件设置页只保存行为参数，不保存 API KEY 和 Base URL。
-- 禁用插件时，如果当前 TTS 引擎是 `minimax-tts`，插件会尝试恢复接管前的 TTS 引擎。
+- Paragraph 开关只影响普通角色台词。只要插件启用且 Paragraph 开关打开，它就会按段落处理普通角色台词；系统消息、BGM、CG 和思维链/状态消息仍交给 Shinsekai 内置 handler。
+- 禁用插件时，`minimax-tts` 会从主菜单 TTS 引擎列表中消失；如果当前 TTS 引擎仍是 `minimax-tts`，插件会把主 TTS 清为 `none`，避免留下无法注册的旧选择。
 - 修改 `plugins.yaml` 后需要重启 Shinsekai。
 - 修改 API 设置或插件设置后，如果聊天进程已经启动，需要重启聊天进程让 adapter 重新构造。
 

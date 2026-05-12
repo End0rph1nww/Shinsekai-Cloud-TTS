@@ -10,9 +10,10 @@ _PATCHED_ATTR = "_minimax_tts_host_hook"
 _ORIGINAL_ATTR = "_minimax_tts_original"
 
 
-def _restore_main_tts_provider() -> None:
-    cfg = state.load_plugin_base_config()
-    state.restore_previous_tts_provider(str(cfg.get("previous_tts_provider") or ""))
+def _clear_main_tts_provider_if_needed() -> None:
+    changed = state.clear_minimax_tts_provider_if_selected()
+    if not changed:
+        return
     try:
         from config.config_manager import ConfigManager
 
@@ -38,9 +39,9 @@ def _wrap_manifest_setter(func: Callable[..., bool]) -> Callable[..., bool]:
     def wrapped(entry: str, enabled: bool, *args: Any, **kwargs: Any) -> bool:
         ok = func(entry, enabled, *args, **kwargs)
         if ok and entry.strip() == state.PLUGIN_ENTRY and not bool(enabled):
-            # 禁用插件后，下一次启动不会再注册 minimax-tts；
-            # 因此必须把主程序 TTS provider 恢复到接管前的值。
-            _restore_main_tts_provider()
+            # 禁用插件后下一次启动不会再注册 minimax-tts；
+            # 如果主菜单仍选着它，就清到 none，避免留下失效入口。
+            _clear_main_tts_provider_if_needed()
             _remove_runtime_adapter()
         return ok
 
@@ -73,5 +74,5 @@ def install() -> None:
 
 
 def uninstall() -> None:
-    _restore_main_tts_provider()
+    _clear_main_tts_provider_if_needed()
     _remove_runtime_adapter()
