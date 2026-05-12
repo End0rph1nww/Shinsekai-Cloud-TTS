@@ -65,6 +65,8 @@ class MinimaxTtsSettingsWidget(QWidget):
         root.setContentsMargins(8, 8, 8, 8)
         root.setSpacing(14)
 
+        root.addWidget(self._guide_block())
+
         api_box, api_lay = self._section("模型与兜底声线")
         self.model = self._combo()
         for item in (
@@ -251,6 +253,31 @@ class MinimaxTtsSettingsWidget(QWidget):
         lay.setContentsMargins(10, 18, 10, 10)
         lay.setSpacing(6)
         return box, lay
+
+    def _guide_block(self) -> QWidget:
+        block = QWidget()
+        lay = QVBoxLayout(block)
+        lay.setContentsMargins(0, 0, 0, 2)
+        lay.setSpacing(6)
+
+        title = QLabel("MiniMax TTS 使用提示")
+        title.setStyleSheet("color: #b88cff; font-weight: 600;")
+        lay.addWidget(title)
+
+        body = QLabel(
+            "先在首页 / 主菜单 API 设置页选择 MiniMax TTS，填写 API KEY 和 BASE URL 并保存；"
+            "本页不重复保存这两个连接凭证，只保存模型、合成参数、Paragraph 和 voice_id 绑定。\n\n"
+            "推荐开启 Paragraph 整段生成。开启后会按段落把台词整段交给 MiniMax，"
+            "更适合长句、停顿和语气标签；关闭后交回主程序原本的标点切分逻辑。\n\n"
+            "复刻声纹请在本页选择角色，确认角色已有参考音频，然后点击“上传所选角色参考音频并缓存 voice_id”。"
+            "生成的 voice_id 会保存在 data/plugins/com.shinsekai.minimax_tts/voices/，升级插件不会自动删除。\n\n"
+            "如果参考音频需要转换，插件会使用 imageio-ffmpeg 提供的 ffmpeg；"
+            "未安装依赖时，只能直接上传符合 MiniMax 要求的 mp3、m4a 或 wav 文件。"
+        )
+        body.setWordWrap(True)
+        body.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        lay.addWidget(body)
+        return block
 
     def _row(self, label: str, field: QWidget) -> QWidget:
         row = QWidget()
