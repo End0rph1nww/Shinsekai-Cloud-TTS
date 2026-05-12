@@ -1,0 +1,77 @@
+from __future__ import annotations
+
+from functools import wraps
+from typing import Any, Callable
+
+from plugins.minimax_tts import state
+
+
+_PATCHED_ATTR = "_minimax_tts_host_hook"
+_ORIGINAL_ATTR = "_minimax_tts_original"
+
+
+def _restore_main_tts_provider() -> None:
+    cfg = state.load_plugin_base_config()
+    state.restore_previous_tts_provider(str(cfg.get("previous_tts_provider") or ""))
+    try:
+        from config.config_manager import ConfigManager
+
+        ConfigManager().reload()
+    except Exception:
+        pass
+
+
+def _remove_runtime_adapter() -> None:
+    try:
+        from tts.tts_manager import TTSAdapterFactory
+
+        TTSAdapterFactory._adapters.pop(state.PROVIDER_SLUG, None)
+    except Exception:
+        pass
+
+
+def _wrap_manifest_setter(func: Callable[..., bool]) -> Callable[..., bool]:
+    if getattr(func, _PATCHED_ATTR, False):
+        return func
+
+    @wraps(func)
+    def wrapped(entry: str, enabled: bool, *args: Any, **kwargs: Any) -> bool:
+        ok = func(entry, enabled, *args, **kwargs)
+        if ok and entry.strip() == state.PLUGIN_ENTRY and not bool(enabled):
+            # 禁用插件后，下一次启动不会再注册 minimax-tts；
+            # 因此必须把主程序 TTS provider 恢复到接管前的值。
+            _restore_main_tts_provider()
+            _remove_runtime_adapter()
+        return ok
+
+    setattr(wrapped, _PATCHED_ATTR, True)
+    setattr(wrapped, _ORIGINAL_ATTR, func)
+    return wrapped
+
+
+def _patch_manifest_setters() -> None:
+    try:
+        import core.plugins.plugin_host as plugin_host
+
+        plugin_host.set_plugin_manifest_enabled = _wrap_manifest_setter(
+            plugin_host.set_plugin_manifest_enabled
+        )
+    except Exception:
+        pass
+    try:
+        from ui.settings_ui.tabs import plugin_tab
+
+        plugin_tab.set_plugin_manifest_enabled = _wrap_manifest_setter(
+            plugin_tab.set_plugin_manifest_enabled
+        )
+    except Exception:
+        pass
+
+
+def install() -> None:
+    _patch_manifest_setters()
+
+
+def uninstall() -> None:
+    _restore_main_tts_provider()
+    _remove_runtime_adapter()

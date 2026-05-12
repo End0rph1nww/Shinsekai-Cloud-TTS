@@ -1,0 +1,20 @@
+﻿{
+    "api_key":  "",
+    "base_api_url":  "https://api.minimaxi.com/v1",
+    "model":  "speech-2.8-hd",
+    "language_boost":  "auto",
+    "auto_clone_from_reference":  false,
+    "voice_cache_path":  "cache/audio/minimax_voice_cache.json",
+    "clone_text":  "",
+    "need_noise_reduction":  false,
+    "need_volume_normalization":  true,
+    "speed":  1.0,
+    "vol":  1.0,
+    "pitch":  0,
+    "audio_format":  "wav",
+    "sample_rate":  32000,
+    "bitrate":  128000,
+    "channel":  1,
+    "request_timeout":  120,
+    "emotion":  ""
+}

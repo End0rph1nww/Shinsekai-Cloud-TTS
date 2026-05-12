@@ -1,0 +1,2 @@
+"""MiniMax TTS plugin package."""
+

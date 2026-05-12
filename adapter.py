@@ -1,0 +1,537 @@
+from __future__ import annotations
+
+import ast
+import base64
+import json
+import os
+import re
+import subprocess
+import time
+from pathlib import Path
+from typing import Any
+
+import requests
+
+from sdk.adapters import TTSAdapter
+
+from plugins.minimax_tts import state
+
+
+class MiniMaxTTSAdapter(TTSAdapter):
+    """MiniMax synchronous T2A adapter with voice clone cache support."""
+
+    _CLONE_UPLOAD_SUFFIXES = {".mp3", ".m4a", ".wav"}
+
+    def __init__(
+        self,
+        api_key: str = "",
+        base_api_url: str = "https://api.minimaxi.com/v1",
+        model: str = "speech-2.8-hd",
+        default_voice_id: str = "",
+        voice_id_map: dict[str, str] | str | None = None,
+        voice_id_versions: dict[str, Any] | str | None = None,
+        voice_cache_path: str = "cache/audio/minimax_voice_cache.json",
+        language_boost: str = "auto",
+        audio_format: str = "wav",
+        sample_rate: int = 32000,
+        bitrate: int = 128000,
+        channel: int = 1,
+        speed: float = 1.0,
+        vol: float = 1.0,
+        pitch: int = 0,
+        emotion: str = "",
+        request_timeout: int = 120,
+        auto_clone_from_reference: bool = False,
+        need_noise_reduction: bool = False,
+        need_volume_normalization: bool = False,
+        use_runtime_config: bool = True,
+        **_ignored_kwargs: Any,
+    ) -> None:
+        # 官方链路：adapter 参数由 api.yaml 的 tts_extra_configs 注入。
+        # 这里仍读取插件状态，是为了兼容旧版 config.json 与角色 voice_id 文件。
+        runtime_cfg: dict[str, Any] = {}
+        if use_runtime_config:
+            plugin_cfg = state.load_runtime_plugin_config()
+            runtime_cfg = dict(plugin_cfg)
+            runtime_cfg.update(state.get_minimax_extra())
+        if runtime_cfg:
+            api_key = runtime_cfg.get("api_key", api_key)
+            base_api_url = runtime_cfg.get("base_api_url", base_api_url)
+            model = runtime_cfg.get("model", model)
+            default_voice_id = runtime_cfg.get(
+                "default_voice_id",
+                runtime_cfg.get("voice_id", default_voice_id),
+            )
+            voice_id_map = runtime_cfg.get("voice_id_map", voice_id_map)
+            voice_id_versions = runtime_cfg.get("voice_id_versions", voice_id_versions)
+            voice_cache_path = runtime_cfg.get("voice_cache_path", voice_cache_path)
+            language_boost = runtime_cfg.get("language_boost", language_boost)
+            audio_format = runtime_cfg.get("audio_format", audio_format)
+            sample_rate = runtime_cfg.get("sample_rate", sample_rate)
+            bitrate = runtime_cfg.get("bitrate", bitrate)
+            channel = runtime_cfg.get("channel", channel)
+            speed = runtime_cfg.get("speed", speed)
+            vol = runtime_cfg.get("vol", vol)
+            pitch = runtime_cfg.get("pitch", pitch)
+            emotion = runtime_cfg.get("emotion", emotion)
+            request_timeout = runtime_cfg.get("request_timeout", request_timeout)
+            auto_clone_from_reference = runtime_cfg.get(
+                "auto_clone_from_reference",
+                auto_clone_from_reference,
+            )
+            need_noise_reduction = runtime_cfg.get(
+                "need_noise_reduction",
+                need_noise_reduction,
+            )
+            need_volume_normalization = runtime_cfg.get(
+                "need_volume_normalization",
+                need_volume_normalization,
+            )
+        self.api_key = (api_key or "").strip()
+        self.base_api_url = (base_api_url or "https://api.minimaxi.com/v1").rstrip("/")
+        self.model = (model or "speech-2.8-hd").strip()
+        self.default_voice_id = (default_voice_id or "").strip()
+        self.voice_id_map = self._coerce_voice_id_map(voice_id_map)
+        self.voice_id_versions = voice_id_versions
+        self.voice_cache_path = state.project_path(voice_cache_path)
+        self.language_boost = (language_boost or "auto").strip()
+        self.audio_format = (audio_format or "wav").strip().lower()
+        self.sample_rate = int(sample_rate or 32000)
+        self.bitrate = int(bitrate or 128000)
+        self.channel = int(channel or 1)
+        self.speed = float(speed or 1.0)
+        self.vol = float(vol or 1.0)
+        self.pitch = int(pitch or 0)
+        self.emotion = (emotion or "").strip()
+        self.request_timeout = int(request_timeout or 120)
+        self.auto_clone_from_reference = bool(auto_clone_from_reference)
+        self.need_noise_reduction = bool(need_noise_reduction)
+        self.need_volume_normalization = bool(need_volume_normalization)
+
+    @classmethod
+    def get_config_schema(cls) -> dict[str, dict]:
+        # API 页只放连接凭证；MiniMax 行为参数集中在插件设置页。
+        return {
+            "api_key": {
+                "type": "str",
+                "label": "MiniMax API KEY",
+                "default": "",
+                "secret": True,
+            },
+            "base_api_url": {
+                "type": "str",
+                "label": "MiniMax Base URL",
+                "default": "https://api.minimaxi.com/v1",
+            },
+        }
+
+    def switch_model(self, model_info: Any) -> None:
+        if isinstance(model_info, dict):
+            vid = str(model_info.get("minimax_voice_id") or "").strip()
+            if vid:
+                name = str(model_info.get("character_name") or "").strip()
+                if name:
+                    self.voice_id_map[name] = vid
+                else:
+                    self.default_voice_id = vid
+
+    def _log(self, message: str) -> None:
+        print(f"MiniMax TTS\uff1a{message}", flush=True)
+
+    def generate_speech(self, text, file_path=None, **kwargs):
+        if not self.api_key:
+            self._log(
+                "\u5408\u6210\u5931\u8d25\uff1aAPI KEY \u4e3a\u7a7a\uff0c"
+                "\u8bf7\u5148\u5728\u63d2\u4ef6\u8bbe\u7f6e\u9875\u586b\u5199\u3002"
+            )
+            return None
+        text_value = str(text or "")
+        character_name = str(kwargs.get("character_name") or "").strip()
+        if not character_name:
+            character_name = "\u672a\u6307\u5b9a\u89d2\u8272"
+        self._log(
+            f"\u5f00\u59cb\u5408\u6210\uff1a\u89d2\u8272={character_name}\uff0c"
+            f"\u6587\u672c\u957f\u5ea6={len(text_value)}\uff0c\u6a21\u578b={self.model}"
+        )
+        out_path = Path(file_path or f"cache/audio/minimax_{int(time.time() * 1000)}.{self.audio_format}")
+        if out_path.suffix and out_path.suffix.lower().lstrip(".") != self.audio_format:
+            out_path = out_path.with_suffix(f".{self.audio_format}")
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        voice_id = self._voice_id_for_request(**kwargs)
+        if not voice_id:
+            self._log(
+                "\u5408\u6210\u5931\u8d25\uff1a\u6ca1\u6709\u53ef\u7528 voice_id\uff0c"
+                "\u4e5f\u6ca1\u6709\u53ef\u81ea\u52a8\u514b\u9686\u7684\u53c2\u8003\u97f3\u9891\u3002"
+            )
+            return None
+
+        speed = kwargs.get("speed_factor")
+        try:
+            speed_value = float(speed) if speed is not None else self.speed
+        except (TypeError, ValueError):
+            speed_value = self.speed
+
+        language_boost = self._language_boost_for(kwargs.get("text_lang"))
+        payload: dict[str, Any] = {
+            "model": self.model,
+            "text": text_value,
+            "stream": False,
+            "language_boost": language_boost,
+            "output_format": "hex",
+            "voice_setting": {
+                "voice_id": voice_id,
+                "speed": speed_value,
+                "vol": self.vol,
+                "pitch": self.pitch,
+            },
+            "audio_setting": {
+                "sample_rate": self.sample_rate,
+                "bitrate": self.bitrate,
+                "format": self.audio_format,
+                "channel": self.channel,
+            },
+            "subtitle_enable": False,
+        }
+        if self.emotion:
+            payload["voice_setting"]["emotion"] = self.emotion
+
+        try:
+            self._log(
+                "\u5408\u6210\u53c2\u6570\uff1a"
+                f"voice_id={voice_id}\uff0c\u8bed\u8a00\u589e\u5f3a={language_boost}\uff0c"
+                f"\u683c\u5f0f={self.audio_format}\uff0c\u8bed\u901f={speed_value:.2f}"
+            )
+            self._log(
+                "\u6b63\u5728\u8bf7\u6c42 MiniMax \u6587\u751f\u97f3\u63a5\u53e3 /t2a_v2 ..."
+            )
+            resp = requests.post(
+                f"{self.base_api_url}/t2a_v2",
+                headers=self._json_headers(),
+                json=payload,
+                timeout=self.request_timeout,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            self._raise_for_base_resp(data)
+            audio = (data.get("data") or {}).get("audio")
+            if not audio:
+                raise RuntimeError("MiniMax returned empty audio.")
+            self._log(
+                "\u63a5\u53e3\u8fd4\u56de\u6210\u529f\uff0c"
+                "\u6b63\u5728\u89e3\u7801\u5e76\u5199\u5165\u97f3\u9891\u6587\u4ef6..."
+            )
+            out_path.write_bytes(self._decode_audio(str(audio)))
+            abs_path = os.path.abspath(out_path)
+            self._log(f"\u5408\u6210\u5b8c\u6210\uff1a{abs_path}")
+            return abs_path
+        except Exception as exc:
+            self._log(f"\u5408\u6210\u5931\u8d25\uff1a{exc}")
+            return None
+
+    def create_cloned_voice_from_file(
+        self,
+        audio_path: str | Path,
+        *,
+        character_name: str = "",
+        prompt_text: str = "",
+        voice_id: str = "",
+    ) -> str:
+        if not self.api_key:
+            raise RuntimeError("MiniMax API key is empty.")
+        path = state.project_path(audio_path).resolve()
+        if not path.is_file():
+            raise FileNotFoundError(str(path))
+        chosen_voice_id = self._normalize_voice_id(voice_id) if voice_id else self._new_voice_id(path, character_name)
+        display_name = character_name or "\u672a\u547d\u540d\u89d2\u8272"
+        self._log(
+            f"\u5f00\u59cb\u58f0\u7ebf\u514b\u9686\uff1a\u89d2\u8272={display_name}\uff0c"
+            f"voice_id={chosen_voice_id}"
+        )
+        upload_path = self._prepare_clone_upload_audio(path)
+        file_id = self._upload_file(upload_path, "voice_clone")
+        payload: dict[str, Any] = {
+            "file_id": file_id,
+            "voice_id": chosen_voice_id,
+            "model": self.model,
+            "need_noise_reduction": self.need_noise_reduction,
+            "need_volume_normalization": self.need_volume_normalization,
+        }
+        self._log(
+            "\u6b63\u5728\u521b\u5efa MiniMax \u514b\u9686\u58f0\u7ebf /voice_clone ..."
+        )
+        resp = requests.post(
+            f"{self.base_api_url}/voice_clone",
+            headers=self._json_headers(),
+            json=payload,
+            timeout=self.request_timeout,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        self._raise_for_base_resp(data)
+        self._cache_voice(path, character_name, chosen_voice_id)
+        if character_name:
+            state.upsert_voice_record(
+                character_name,
+                chosen_voice_id,
+                {
+                    "source": "auto_clone",
+                    "model": self.model,
+                    "reference_audio_path": str(path),
+                },
+                selected=True,
+            )
+        self._log(
+            f"\u58f0\u7ebf\u514b\u9686\u5b8c\u6210\uff0c"
+            f"\u5e76\u5df2\u5199\u5165\u672c\u5730\u7f13\u5b58\uff1a{chosen_voice_id}"
+        )
+        return chosen_voice_id
+
+    def _json_headers(self) -> dict[str, str]:
+        return {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+        }
+
+    def _upload_file(self, path: Path, purpose: str) -> int:
+        self._log(f"\u6b63\u5728\u4e0a\u4f20\u53c2\u8003\u97f3\u9891\uff1a{path.name}")
+        with path.open("rb") as f:
+            resp = requests.post(
+                f"{self.base_api_url}/files/upload",
+                headers={"Authorization": f"Bearer {self.api_key}"},
+                data={"purpose": purpose},
+                files={"file": (path.name, f)},
+                timeout=self.request_timeout,
+            )
+        resp.raise_for_status()
+        data = resp.json()
+        self._raise_for_base_resp(data)
+        file_id = (data.get("file") or {}).get("file_id")
+        if file_id is None:
+            raise RuntimeError("MiniMax upload response missing file_id.")
+        self._log(f"\u53c2\u8003\u97f3\u9891\u4e0a\u4f20\u5b8c\u6210\uff1afile_id={file_id}")
+        return int(file_id)
+
+    def _prepare_clone_upload_audio(self, path: Path) -> Path:
+        ffmpeg = self._find_ffmpeg()
+        if ffmpeg is None:
+            if (
+                path.suffix.lower() in self._CLONE_UPLOAD_SUFFIXES
+                and path.stat().st_size <= 20_000_000
+            ):
+                self._log(
+                    "\u672a\u627e\u5230 ffmpeg\uff0c\u53c2\u8003\u97f3\u9891"
+                    "\u683c\u5f0f\u548c\u5927\u5c0f\u5df2\u7b26\u5408\u8981\u6c42\uff0c"
+                    "\u76f4\u63a5\u4e0a\u4f20\u3002"
+                )
+                return path
+            raise RuntimeError(
+                "Reference audio needs conversion. Install plugin dependencies with: "
+                "runtime\\python.exe -m pip install -r plugins\\minimax_tts\\requirements.txt"
+            )
+
+        self._log(
+            "\u6b63\u5728\u628a\u53c2\u8003\u97f3\u9891\u8f6c\u6362\u4e3a "
+            "MiniMax \u53ef\u63a5\u53d7\u7684 wav \u683c\u5f0f..."
+        )
+        out_dir = state.project_path("cache/audio/minimax_upload")
+        out_dir.mkdir(parents=True, exist_ok=True)
+        out_path = out_dir / f"{path.stem}_{state.short_hash(str(path) + str(path.stat().st_mtime_ns), 10)}.wav"
+        cmd = [
+            str(ffmpeg),
+            "-y",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-i",
+            str(path),
+            "-vn",
+            "-t",
+            "300",
+            "-ac",
+            "1",
+            "-ar",
+            "32000",
+            "-sample_fmt",
+            "s16",
+            str(out_path),
+        ]
+        try:
+            subprocess.run(cmd, check=True, capture_output=True, text=True)
+        except subprocess.CalledProcessError as exc:
+            detail = (exc.stderr or exc.stdout or "").strip()
+            raise RuntimeError(f"Failed to convert reference audio with ffmpeg: {detail}") from exc
+        if not out_path.is_file() or out_path.stat().st_size <= 0:
+            raise RuntimeError("Converted reference audio is empty.")
+        if out_path.stat().st_size > 20_000_000:
+            raise RuntimeError("Converted reference audio is still larger than 20 MB.")
+        self._log(f"\u53c2\u8003\u97f3\u9891\u8f6c\u6362\u5b8c\u6210\uff1a{out_path}")
+        return out_path
+
+    def _find_ffmpeg(self) -> Path | None:
+        try:
+            import imageio_ffmpeg
+        except ImportError:
+            return None
+        item = Path(imageio_ffmpeg.get_ffmpeg_exe())
+        if item.is_file():
+            return item
+        return None
+
+    def _raise_for_base_resp(self, data: dict[str, Any]) -> None:
+        base = data.get("base_resp") or {}
+        code = base.get("status_code", 0)
+        if code not in (0, "0", None):
+            raise RuntimeError(f"{code}: {base.get('status_msg', 'MiniMax API error')}")
+
+    def _decode_audio(self, audio: str) -> bytes:
+        s = audio.strip()
+        if re.fullmatch(r"[0-9a-fA-F]+", s or ""):
+            return bytes.fromhex(s)
+        return base64.b64decode(s)
+
+    def _language_boost_for(self, text_lang: Any) -> str:
+        code = str(text_lang or "").strip().lower()
+        if code == "ja":
+            return "Japanese"
+        if code == "zh":
+            return "Chinese"
+        if code == "yue":
+            return "Chinese,Yue"
+        if code == "en":
+            return "English"
+        return self.language_boost or "auto"
+
+    def _voice_id_for_request(self, **kwargs) -> str:
+        character_name = str(kwargs.get("character_name") or "").strip()
+        ref_audio_path = str(kwargs.get("ref_audio_path") or "").strip()
+        # 优先级保持不变：角色绑定 > 默认保底 > 自动克隆缓存 > 现场克隆。
+        mapped = self._voice_id_for_character(character_name)
+        if mapped:
+            self._log(f"\u4f7f\u7528\u89d2\u8272\u56fa\u5b9a voice_id\uff1a{character_name} -> {mapped}")
+            return mapped
+        if self.default_voice_id:
+            if character_name:
+                self._log(
+                    f"\u89d2\u8272 {character_name} \u672a\u7ed1\u5b9a voice_id\uff0c"
+                    f"\u4f7f\u7528\u9ed8\u8ba4\u4fdd\u5e95 voice_id\uff1a{self.default_voice_id}"
+                )
+            return self.default_voice_id
+        if character_name and ref_audio_path:
+            cached = self._cached_voice(ref_audio_path, character_name)
+            if cached:
+                self._log(f"\u4f7f\u7528\u7f13\u5b58\u514b\u9686 voice_id\uff1a{character_name} -> {cached}")
+                return cached
+        if self.auto_clone_from_reference and ref_audio_path:
+            prompt_text = str(kwargs.get("prompt_text") or "").strip()
+            display_name = character_name or "\u672a\u547d\u540d\u89d2\u8272"
+            self._log(
+                f"\u672a\u627e\u5230 voice_id\uff0c"
+                f"\u51c6\u5907\u4ece\u53c2\u8003\u97f3\u9891\u81ea\u52a8\u514b\u9686\uff1a{display_name}"
+            )
+            return self.create_cloned_voice_from_file(
+                ref_audio_path,
+                character_name=character_name,
+                prompt_text=prompt_text,
+            )
+        return ""
+
+    def _voice_id_for_character(self, character_name: str) -> str:
+        if not character_name:
+            return ""
+        for key, value in self.voice_id_map.items():
+            if key.strip().lower() == character_name.strip().lower():
+                return str(value or "").strip()
+        return ""
+
+    def _coerce_voice_id_map(self, value: dict[str, str] | str | None) -> dict[str, str]:
+        if value is None:
+            return {}
+        raw: Any = value
+        if isinstance(value, str):
+            text = value.strip()
+            if not text:
+                return {}
+            try:
+                raw = json.loads(text)
+            except json.JSONDecodeError:
+                try:
+                    raw = ast.literal_eval(text)
+                except (SyntaxError, ValueError):
+                    return {}
+        if not isinstance(raw, dict):
+            return {}
+        out: dict[str, str] = {}
+        for key, item in raw.items():
+            name = str(key or "").strip()
+            vid = str(item or "").strip()
+            if name and vid:
+                out[name] = vid
+        return out
+
+    def _cache_data(self) -> dict[str, Any]:
+        if not self.voice_cache_path.is_file():
+            return {"voices": {}}
+        try:
+            raw = json.loads(self.voice_cache_path.read_text(encoding="utf-8"))
+        except Exception:
+            return {"voices": {}}
+        if not isinstance(raw, dict):
+            return {"voices": {}}
+        voices = raw.get("voices")
+        if not isinstance(voices, dict):
+            raw["voices"] = {}
+        return raw
+
+    def _save_cache_data(self, data: dict[str, Any]) -> None:
+        self.voice_cache_path.parent.mkdir(parents=True, exist_ok=True)
+        self.voice_cache_path.write_text(
+            json.dumps(data, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+
+    def _cache_key(self, path: Path, character_name: str) -> str:
+        api_hash = state.short_hash(self.api_key)
+        file_hash = state.sha256_file(path)
+        return state.short_hash(
+            f"{self.base_api_url}|{api_hash}|{character_name}|{file_hash}",
+            size=32,
+        )
+
+    def _cached_voice(self, audio_path: str | Path, character_name: str) -> str:
+        path = state.project_path(audio_path).resolve()
+        if not path.is_file():
+            return ""
+        data = self._cache_data()
+        rec = (data.get("voices") or {}).get(self._cache_key(path, character_name))
+        if isinstance(rec, dict):
+            return str(rec.get("voice_id") or "").strip()
+        return ""
+
+    def _cache_voice(self, path: Path, character_name: str, voice_id: str) -> None:
+        data = self._cache_data()
+        voices = data.setdefault("voices", {})
+        voices[self._cache_key(path, character_name)] = {
+            "voice_id": voice_id,
+            "character_name": character_name,
+            "reference_audio_path": str(path),
+            "reference_audio_sha256": state.sha256_file(path),
+            "api_key_sha256": state.short_hash(self.api_key),
+            "base_api_url": self.base_api_url,
+            "model": self.model,
+            "created_at": int(time.time()),
+        }
+        self._save_cache_data(data)
+
+    def _new_voice_id(self, path: Path, character_name: str) -> str:
+        stamp = time.strftime("%Y%m%d%H%M%S")
+        seed = f"{character_name}|{path}|{time.time_ns()}"
+        return self._normalize_voice_id(f"shinsekai_{stamp}_{state.short_hash(seed, 10)}")
+
+    def _normalize_voice_id(self, value: str) -> str:
+        cleaned = re.sub(r"[^A-Za-z0-9_-]+", "_", value.strip())
+        cleaned = cleaned.strip("_-")
+        if not cleaned or not cleaned[0].isalpha():
+            cleaned = f"voice_{cleaned}"
+        if len(cleaned) < 8:
+            cleaned = f"{cleaned}_{state.short_hash(cleaned, 8)}"
+        return cleaned[:256].rstrip("_-")
