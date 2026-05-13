@@ -16,6 +16,8 @@ _TEMPLATE_RESTORE_ORIGINAL_ATTR = "_cloud_tts_original_restore_last_launch_sessi
 _TEMPLATE_RESTORE_HOOK_ATTR = "_cloud_tts_restore_session_hook"
 _TEMPLATE_GENERATE_ORIGINAL_ATTR = "_cloud_tts_original_on_generate"
 _TEMPLATE_GENERATE_HOOK_ATTR = "_cloud_tts_on_generate_hook"
+_TEXT_PROCESSOR_ORIGINAL_ATTR = "_cloud_tts_original_remove_parentheses"
+_TEXT_PROCESSOR_HOOK_ATTR = "_cloud_tts_remove_parentheses_hook"
 
 
 def _provider_wants_constraint(provider: str | None) -> bool:
@@ -141,7 +143,10 @@ def _sync_template_session_file(template_tab: Any, provider: str | None) -> None
 
 def _get_character_constraint_text(character_name: str) -> str | None:
     """Get currently selected constraint text for a character from per-character versioned system."""
-    return state.get_character_constraint_text(character_name)
+    return state.get_character_constraint_text(
+        character_name,
+        state.voice_language_for_character(character_name),
+    )
 
 
 def _sync_template_text(
@@ -159,16 +164,16 @@ def _sync_template_text(
     if not _looks_like_generated_template(old, selected_characters):
         return old
 
-    # Collect constraint texts from all selected characters
-    constraint_texts: set[str] = set()
+    # Collect constraint texts from all selected characters.
+    # 不同角色可以有不同语音语言，因此这里合并为一个标记块，而不是直接放弃注入。
+    constraint_texts: list[str] = []
     for name in selected_characters:
         ct = _get_character_constraint_text(name)
         if ct:
-            constraint_texts.add(ct)
+            constraint_texts.append(ct)
 
-    # If all characters share the same constraint, inject it
-    if len(constraint_texts) == 1:
-        constraint_text = next(iter(constraint_texts))
+    constraint_text = state.combine_prompt_constraint_texts(constraint_texts)
+    if constraint_text:
         return state.add_prompt_constraint_text(old, constraint_text)
 
     return state.remove_prompt_constraint_text(old)
@@ -269,15 +274,53 @@ def _patch_template_generate() -> None:
     TemplateSettingsTab._on_generate = wrapped
 
 
+def _patch_text_processor() -> None:
+    try:
+        from llm.text_processor import TextProcessor
+    except Exception:
+        return
+    current = TextProcessor.remove_parentheses
+    if getattr(current, _TEXT_PROCESSOR_HOOK_ATTR, False):
+        return
+
+    @wraps(current)
+    def wrapped(self: Any, text: str, *args: Any, **kwargs: Any) -> str:
+        if state.plugin_manifest_enabled() and state.is_cloud_tts_provider(
+            state.current_tts_provider()
+        ):
+            protected, placeholders = state.protect_tone_tags(text)
+            cleaned = current(self, protected, *args, **kwargs)
+            return state.restore_tone_tags(cleaned, placeholders)
+        return current(self, text, *args, **kwargs)
+
+    setattr(wrapped, _TEXT_PROCESSOR_HOOK_ATTR, True)
+    setattr(wrapped, _TEXT_PROCESSOR_ORIGINAL_ATTR, current)
+    TextProcessor.remove_parentheses = wrapped
+
+
 def install() -> None:
     _unpatch_legacy_template_generator()
     _patch_api_save()
     _patch_template_restore()
     _patch_template_generate()
+    _patch_text_processor()
 
 
 def uninstall() -> None:
     _unpatch_legacy_template_generator()
+    try:
+        from llm.text_processor import TextProcessor
+
+        text_current = TextProcessor.remove_parentheses
+        text_original: Callable[..., Any] | None = getattr(
+            text_current,
+            _TEXT_PROCESSOR_ORIGINAL_ATTR,
+            None,
+        )
+        if text_original is not None:
+            TextProcessor.remove_parentheses = text_original
+    except Exception:
+        pass
     try:
         from ui.settings_ui.tabs.api_tab import ApiSettingsTab
 

@@ -14,7 +14,7 @@ import yaml
 PROVIDER_SLUG = "minimax-tts"
 PLUGIN_ID = "com.shinsekai.cloud_tts"
 PLUGIN_ENTRY = "plugins.cloud_tts.plugin:CloudTtsPlugin"
-PLUGIN_VERSION = "0.7.9"
+PLUGIN_VERSION = "0.8.0"
 
 LEGACY_PROVIDER_SLUG = "cloud-tts"
 LEGACY_PLUGIN_ID = "com.shinsekai.minimax_tts"
@@ -43,6 +43,7 @@ PLUGIN_STATE_KEYS = {
     "emotion",
     "request_timeout",
     "local_reference_audio_map",
+    "voice_language_map",
     "auto_clone_from_reference",
     "need_noise_reduction",
     "need_volume_normalization",
@@ -54,6 +55,37 @@ CONSTRAINT_END = "<<<CLOUD_TTS_TONE_CONSTRAINT_END>>>"
 LEGACY_CONSTRAINT_START = "<<<MINIMAX_TTS_TONE_CONSTRAINT_START>>>"
 LEGACY_CONSTRAINT_END = "<<<MINIMAX_TTS_TONE_CONSTRAINT_END>>>"
 _PROMPT_CONSTRAINT_SUPPRESS_UNTIL = 0.0
+
+CLOUD_TTS_TONE_TAGS = (
+    "(laughs)",
+    "(chuckle)",
+    "(coughs)",
+    "(clear-throat)",
+    "(groans)",
+    "(breath)",
+    "(pant)",
+    "(inhale)",
+    "(exhale)",
+    "(gasps)",
+    "(sniffs)",
+    "(sighs)",
+    "(snorts)",
+    "(burps)",
+    "(lip-smacking)",
+    "(humming)",
+    "(hissing)",
+    "(emm)",
+    "(sneezes)",
+)
+
+VOICE_LANGUAGE_OPTIONS = (
+    ("auto", "跟随主菜单语音语言"),
+    ("zh", "中文"),
+    ("ja", "日语"),
+    ("yue", "粤语"),
+    ("en", "英语"),
+)
+VALID_VOICE_LANGUAGES = tuple(code for code, _label in VOICE_LANGUAGE_OPTIONS)
 
 
 # ----------------------------------------------------------------------
@@ -106,36 +138,119 @@ def _load_old_prompt_constraints() -> dict[str, str]:
         return _get_hardcoded_constraints()
 
 
-def _get_hardcoded_constraints() -> dict[str, str]:
-    """Return hardcoded default constraints for migration fallback."""
-    return {
-        "default": f"""{CONSTRAINT_START}
-当模板要求输出 translate 字段时，translate 字段会作为 MiniMax 文生音输入。因此，日语译文可以根据台词情绪，在合适位置加入 MiniMax 支持的语气标签，用于辅助语音表现。
-speech 字段必须保持自然简体中文，不出现 (laughs)、(sighs) 等标签。
-语气标签只能放在 translate 字段，不要放进 speech 字段。
-可用标签包括但不限于：
-(laughs)：轻笑、大笑、调侃、开心、得意时使用。
-(sighs)：叹气、无奈、担心、疲惫、收束语气时使用。
-(breath)：轻呼吸、停顿、靠近感、柔和语气时使用。
-(gasps)：惊讶、震惊、突然发现异常时使用。
-(crying)：哭腔、委屈、强烈难过时使用。
-使用要求：
-speech 字段必须保持自然简体中文，不出现 (laughs)、(sighs) 等标签。
-标签应放在最能表现情绪的位置。
-通常可以放在句首，例如：
-(laughs)りょ、先輩。これは華淡の勝ちですね。
-也可以放在句中停顿处，例如：
-えっと……(sighs)先輩、それは少し危ないかもです。
-日常轻松对话可以适当增加 (laughs)、(breath)；
-标签不翻译成中文，也不写进旁白。
-它只是给 Cloud TTS 使用的语音控制提示。
-轻快调侃、得意、自信：优先使用 (laughs)
+def normalize_voice_language_code(value: Any) -> str:
+    """Normalize UI / config voice language codes to the plugin's short codes."""
+    raw = str(value or "").strip().lower().replace("-", "_")
+    if raw in {"", "auto", "default", "follow", "main"}:
+        return "auto"
+    if raw in {"zh", "zh_cn", "zh_hans", "cn", "chinese", "mandarin", "中文"}:
+        return "zh"
+    if raw in {"ja", "jp", "japanese", "日本語", "日语", "日語"}:
+        return "ja"
+    if raw in {"yue", "zh_yue", "zh_hk", "cantonese", "粤语", "粵語"}:
+        return "yue"
+    if raw in {"en", "eng", "english", "英语", "英語"}:
+        return "en"
+    return "auto"
+
+
+def voice_language_label(value: Any) -> str:
+    code = normalize_voice_language_code(value)
+    labels = dict(VOICE_LANGUAGE_OPTIONS)
+    return labels.get(code, labels["auto"])
+
+
+def _tone_tag_lines() -> str:
+    return """(laughs)：笑声，开心、调侃、得意时使用。
+(chuckle)：轻笑，轻松吐槽、小声笑时使用。
+(coughs)：咳嗽。
+(clear-throat)：清嗓子，准备开口或收束气氛时使用。
+(groans)：呻吟、吃力、困扰时使用。
+(breath)：正常换气，柔和停顿、靠近感时使用。
+(pant)：喘气，急促、跑动、慌乱时使用。
+(inhale)：吸气，准备说重要内容或惊讶前使用。
+(exhale)：呼气，放松、释然、疲惫时使用。
+(gasps)：倒吸气，震惊、突然发现异常时使用。
+(sniffs)：吸鼻子，委屈、哭腔边缘时使用。
+(sighs)：叹气，无奈、担心、疲惫、收束语气时使用。
+(snorts)：喷鼻息，不屑、忍笑、轻蔑时使用。
+(burps)：打嗝。
+(lip-smacking)：咂嘴，犹豫、思考、略带不满时使用。
+(humming)：哼唱、鼻音，轻松或思考时使用。
+(hissing)：嘶嘶声，压低声音、危险感时使用。
+(emm)：嗯，犹豫、思考、拖长停顿时使用。
+(sneezes)：喷嚏。"""
+
+
+def _language_constraint_body(voice_language: Any) -> str:
+    code = normalize_voice_language_code(voice_language)
+    target_lines = {
+        "zh": (
+            "角色语音目标：中文。\n"
+            "translate 字段不是外语翻译，而是 Cloud TTS 的中文输入文本。"
+            "translate 必须使用自然简体中文，可以与 speech 完全相同，也可以在最能表现情绪的位置加入语气标签。"
+        ),
+        "ja": (
+            "角色语音目标：日语。\n"
+            "translate 字段是 Cloud TTS 的日语输入文本。请把 speech 的中文台词转成自然日语，"
+            "并可在最能表现情绪的位置加入语气标签。"
+        ),
+        "yue": (
+            "角色语音目标：粤语。\n"
+            "translate 字段是 Cloud TTS 的粤语输入文本。请把 speech 的中文台词转成自然粤语表达，"
+            "并可在最能表现情绪的位置加入语气标签。"
+        ),
+        "en": (
+            "角色语音目标：英语。\n"
+            "translate 字段是 Cloud TTS 的英语输入文本。请把 speech 的中文台词转成自然英语表达，"
+            "并可在最能表现情绪的位置加入语气标签。"
+        ),
+        "auto": (
+            "角色语音目标：跟随插件里的角色语音语言设置；若未指定，则跟随主菜单语音语言。\n"
+            "无论目标语言是什么，每条角色对白都必须输出 translate 字段。"
+            "中文目标时 translate 使用自然简体中文；日语、粤语、英语目标时，translate 使用对应语言。"
+        ),
+    }
+    target = target_lines.get(code, target_lines["auto"])
+    return f"""Cloud TTS 启用时，每条角色对白必须输出 translate 字段。
+speech 字段用于屏幕显示，必须保持自然简体中文，不要放入语气标签。
+translate 字段用于 Cloud TTS 合成，可以根据角色语音目标语言改写，并且允许加入 Cloud TTS 支持的语气标签。
+
+{target}
+
+严格规则：
+1. speech 字段必须是自然简体中文，不出现 (laughs)、(sighs)、(breath)、(gasps) 等括号语气标签。
+2. 语气标签只能放在 translate 字段，不要放进 speech 字段。
+3. 不要加入舞台说明、动作描写、旁白、Markdown 或代码块。
+4. 标签不翻译成中文，也不写进旁白；它只给 Cloud TTS 做语音控制提示。
+5. 仅当模型选择 speech-2.8-hd 或 speech-2.8-turbo 时，才推荐在 translate 中加入语气标签；其他模型尽量少用或不用。
+
+可用语气标签：
+{_tone_tag_lines()}
+
+使用建议：
+轻快调侃、得意、自信：优先使用 (laughs) 或 (chuckle)
 惊讶、发现异常、ヤバ 展开：优先使用 (gasps)
 担心、提醒风险、需要刹车：优先使用 (sighs)
 温柔陪伴、靠近感、语音助手模式：可使用 (breath)
-明显委屈、害怕失去连接、强烈情绪：使用 (crying)
-{CONSTRAINT_END}"""
-    }
+犹豫、思考、短暂停顿：可使用 (emm) 或 (inhale)
+
+输出示例：
+中文语音：
+{{"character_name":"海漫華淡","speech":"前辈，这个我来观测。问题不大。","translate":"(chuckle)前辈，这个我来观测。问题不大。","sprite":"11"}}
+日语语音：
+{{"character_name":"海漫華淡","speech":"前辈，这个我来观测。问题不大。","translate":"(chuckle)先輩、これは華淡が観測します。問題ありません。","sprite":"11"}}"""
+
+
+def build_default_constraint_text(voice_language: Any = "auto") -> str:
+    """Build the built-in Cloud TTS prompt constraint for a voice language."""
+    body = _language_constraint_body(voice_language).strip()
+    return f"{CONSTRAINT_START}\n{body}\n{CONSTRAINT_END}"
+
+
+def _get_hardcoded_constraints() -> dict[str, str]:
+    """Return hardcoded default constraints for migration fallback."""
+    return {"default": build_default_constraint_text("auto")}
 
 
 def get_default_template_text() -> str:
@@ -308,16 +423,33 @@ def select_constraint_version(character_name: str, version_id: str) -> bool:
     return True
 
 
-def get_character_constraint_text(character_name: str) -> str | None:
+def get_character_constraint_record(character_name: str) -> dict[str, Any] | None:
     """
-    Get the currently selected constraint text for a character.
+    Get the currently selected constraint record for a character.
     Returns None if no constraint is configured.
     """
     store = load_character_constraints(character_name)
     selected = store.get("selected_version")
     if not selected or selected not in store["versions"]:
         return None
-    return store["versions"][selected].get("constraint_text")
+    record = store["versions"][selected]
+    return dict(record) if isinstance(record, dict) else None
+
+
+def get_character_constraint_text(
+    character_name: str,
+    voice_language: Any = "auto",
+) -> str | None:
+    """
+    Get the currently selected constraint text for a character.
+    Default-source constraints are adapted at injection time to the character voice language.
+    """
+    record = get_character_constraint_record(character_name)
+    if not record:
+        return None
+    if record.get("source") == "default":
+        return build_default_constraint_text(voice_language)
+    return record.get("constraint_text")
 
 
 def list_constraint_versions(character_name: str) -> list[tuple[str, dict[str, Any]]]:
@@ -381,6 +513,78 @@ def remove_prompt_constraint_text(text: str) -> str:
     return src.lstrip("\r\n")
 
 
+def unwrap_prompt_constraint_text(text: str) -> str:
+    """Return the body inside a prompt constraint block."""
+    src = (text or "").strip()
+    for start, end in (
+        (CONSTRAINT_START, CONSTRAINT_END),
+        (LEGACY_CONSTRAINT_START, LEGACY_CONSTRAINT_END),
+    ):
+        pattern = re.compile(
+            rf"{re.escape(start)}\s*(.*?)\s*{re.escape(end)}",
+            re.DOTALL,
+        )
+        match = pattern.search(src)
+        if match:
+            return match.group(1).strip()
+    return src
+
+
+def wrap_prompt_constraint_text(body: str) -> str:
+    """Wrap a prompt constraint body with Cloud TTS markers."""
+    clean = (body or "").strip()
+    return f"{CONSTRAINT_START}\n{clean}\n{CONSTRAINT_END}"
+
+
+def combine_prompt_constraint_texts(texts: list[str]) -> str:
+    """Combine multiple per-character constraints into one marked block."""
+    bodies: list[str] = []
+    seen: set[str] = set()
+    for text in texts:
+        body = unwrap_prompt_constraint_text(text)
+        key = body.strip()
+        if not key or key in seen:
+            continue
+        bodies.append(body)
+        seen.add(key)
+    if not bodies:
+        return ""
+    guard = (
+        "Cloud TTS 通用强制规则：每条角色对白必须输出 translate 字段。"
+        "speech 字段只用于屏幕显示，必须保持自然简体中文且不能包含语气标签；"
+        "translate 字段用于语音合成，允许按角色语音目标语言改写并加入 Cloud TTS 支持的语气标签。"
+    )
+    if len(bodies) == 1:
+        body = bodies[0]
+        if "每条角色对白必须输出 translate 字段" not in body:
+            body = f"{guard}\n\n{body}"
+        return wrap_prompt_constraint_text(body)
+    combined = "以下约束按不同角色语音语言合并；生成对白时，请按对应角色的语音目标处理 translate 字段。\n\n"
+    combined += f"{guard}\n\n"
+    combined += "\n\n".join(f"【角色语音约束 {i}】\n{body}" for i, body in enumerate(bodies, start=1))
+    return wrap_prompt_constraint_text(combined)
+
+
+def protect_tone_tags(text: str) -> tuple[str, dict[str, str]]:
+    """Replace Cloud TTS tone tags with placeholders before generic parenthesis cleanup."""
+    protected = str(text or "")
+    placeholders: dict[str, str] = {}
+    for index, tag in enumerate(CLOUD_TTS_TONE_TAGS):
+        if tag not in protected:
+            continue
+        token = f"__CLOUD_TTS_TONE_TAG_{index}__"
+        protected = protected.replace(tag, token)
+        placeholders[token] = tag
+    return protected, placeholders
+
+
+def restore_tone_tags(text: str, placeholders: dict[str, str]) -> str:
+    restored = str(text or "")
+    for token, tag in placeholders.items():
+        restored = restored.replace(token, tag)
+    return restored
+
+
 def add_prompt_constraint_text(text: str, constraint: str | None = None) -> str:
     """Add constraint text to prompt."""
     constraint_text = constraint or ""
@@ -426,6 +630,10 @@ def is_cloud_tts_entry(entry: str | None) -> bool:
 
 def api_config_path() -> Path:
     return project_root() / "data" / "config" / "api.yaml"
+
+
+def system_config_path() -> Path:
+    return project_root() / "data" / "config" / "system_config.yaml"
 
 
 def characters_config_path() -> Path:
@@ -533,6 +741,16 @@ def load_api_config() -> dict[str, Any]:
     return raw if isinstance(raw, dict) else {}
 
 
+def load_system_config() -> dict[str, Any]:
+    raw = read_yaml(system_config_path(), {})
+    return raw if isinstance(raw, dict) else {}
+
+
+def current_system_voice_language() -> str:
+    data = load_system_config()
+    return normalize_voice_language_code(data.get("voice_language") or "auto")
+
+
 def save_api_config(data: dict[str, Any]) -> None:
     write_yaml(api_config_path(), data)
 
@@ -595,6 +813,38 @@ def adapter_config_from_values(values: dict[str, Any]) -> dict[str, Any]:
 def plugin_state_from_values(values: dict[str, Any]) -> dict[str, Any]:
     """只保留插件私有状态，避免把 API key 等 adapter 参数写进插件源码区。"""
     return {k: values[k] for k in PLUGIN_STATE_KEYS if k in values}
+
+
+def coerce_voice_language_map(value: Any) -> dict[str, str]:
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except Exception:
+            value = {}
+    if not isinstance(value, dict):
+        return {}
+    out: dict[str, str] = {}
+    for key, item in value.items():
+        name = str(key or "").strip()
+        code = normalize_voice_language_code(item)
+        if name and code != "auto":
+            out[name] = code
+    return out
+
+
+def voice_language_map_from_config() -> dict[str, str]:
+    cfg = load_plugin_base_config()
+    return coerce_voice_language_map(cfg.get("voice_language_map"))
+
+
+def voice_language_for_character(character_name: str) -> str:
+    name = (character_name or "").strip()
+    target = name.lower()
+    voice_map = voice_language_map_from_config()
+    for key, value in voice_map.items():
+        if key.strip().lower() == target:
+            return normalize_voice_language_code(value)
+    return current_system_voice_language()
 
 
 def migrate_api_extra_to_plugin_state(plugin_root: Path | None = None) -> None:

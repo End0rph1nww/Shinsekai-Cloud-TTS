@@ -99,6 +99,7 @@ class CloudTTSAdapter(TTSAdapter):
         default_voice_id: str = "",
         voice_id_map: dict[str, str] | str | None = None,
         voice_id_versions: dict[str, Any] | str | None = None,
+        voice_language_map: dict[str, Any] | str | None = None,
         voice_cache_path: str = "cache/audio/cloud_tts_voice_cache.json",
         local_reference_audio_map: dict[str, str] | str | None = None,
         language_boost: str = "auto",
@@ -134,6 +135,7 @@ class CloudTTSAdapter(TTSAdapter):
             )
             voice_id_map = runtime_cfg.get("voice_id_map", voice_id_map)
             voice_id_versions = runtime_cfg.get("voice_id_versions", voice_id_versions)
+            voice_language_map = runtime_cfg.get("voice_language_map", voice_language_map)
             voice_cache_path = runtime_cfg.get("voice_cache_path", voice_cache_path)
             local_reference_audio_map = runtime_cfg.get(
                 "local_reference_audio_map",
@@ -167,6 +169,7 @@ class CloudTTSAdapter(TTSAdapter):
         self.default_voice_id = (default_voice_id or "").strip()
         self.voice_id_map = self._coerce_voice_id_map(voice_id_map)
         self.voice_id_versions = voice_id_versions
+        self.voice_language_map = state.coerce_voice_language_map(voice_language_map)
         self.voice_cache_path = state.project_path(voice_cache_path)
         self.local_reference_audio_map = self._coerce_local_reference_audio_map(
             local_reference_audio_map
@@ -252,7 +255,10 @@ class CloudTTSAdapter(TTSAdapter):
             2.0,
         )
 
-        language_boost = self._language_boost_for(kwargs.get("text_lang"))
+        language_boost = self._language_boost_for(
+            kwargs.get("text_lang"),
+            character_name=character_name,
+        )
         payload: dict[str, Any] = {
             "model": self.model,
             "text": text_value,
@@ -498,8 +504,19 @@ class CloudTTSAdapter(TTSAdapter):
             return bytes.fromhex(s)
         return base64.b64decode(s)
 
-    def _language_boost_for(self, text_lang: Any) -> str:
-        code = str(text_lang or "").strip().lower()
+    def _voice_language_for_character(self, character_name: str) -> str:
+        target = (character_name or "").strip().lower()
+        if not target:
+            return "auto"
+        for key, value in self.voice_language_map.items():
+            if key.strip().lower() == target:
+                return state.normalize_voice_language_code(value)
+        return "auto"
+
+    def _language_boost_for(self, text_lang: Any, *, character_name: str = "") -> str:
+        code = self._voice_language_for_character(character_name)
+        if code == "auto":
+            code = state.normalize_voice_language_code(text_lang)
         if code == "ja":
             return "Japanese"
         if code == "zh":

@@ -53,6 +53,7 @@ class CloudTtsSettingsWidget(QWidget):
         self._voice_id_map: dict[str, str] = {}
         self._voice_id_versions: dict[str, list[dict[str, Any]]] = {}
         self._local_reference_audio_map: dict[str, str] = {}
+        self._voice_language_map: dict[str, str] = {}
         self._current_voice_character_name = ""
         self._build_ui()
         self._load_values()
@@ -142,6 +143,14 @@ class CloudTtsSettingsWidget(QWidget):
             self._store_current_character_voice_id
         )
         voice_lay.addWidget(self._row("角色 voice_id", self.character_voice_id))
+
+        self.character_voice_language = self._combo()
+        for code, label in state.VOICE_LANGUAGE_OPTIONS:
+            self.character_voice_language.addItem(label, code)
+        self.character_voice_language.currentIndexChanged.connect(
+            lambda _index: self._store_current_voice_language()
+        )
+        voice_lay.addWidget(self._row("角色语音语言", self.character_voice_language))
 
         self.upload_btn = QPushButton("上传参考音频并克隆 voice_id")
         self.upload_btn.setFixedHeight(FIELD_HEIGHT)
@@ -501,6 +510,9 @@ class CloudTtsSettingsWidget(QWidget):
         self._local_reference_audio_map = self._coerce_path_map(
             values.get("local_reference_audio_map")
         )
+        self._voice_language_map = state.coerce_voice_language_map(
+            values.get("voice_language_map")
+        )
         self._ensure_versions_from_selected_map()
         self._refresh_default_voice_options(str(values.get("default_voice_id") or ""))
         self._set_combo(
@@ -606,8 +618,18 @@ class CloudTtsSettingsWidget(QWidget):
         self._set_voice_combo_value(self.character_voice_id, selected)
         self.character_voice_id.blockSignals(False)
 
+    def _refresh_character_voice_language(self, character_name: str) -> None:
+        code = self._voice_language_map.get(character_name, "auto")
+        self.character_voice_language.blockSignals(True)
+        self._set_combo(
+            self.character_voice_language,
+            state.normalize_voice_language_code(code),
+        )
+        self.character_voice_language.blockSignals(False)
+
     def _reload_characters(self) -> None:
         self._store_current_local_reference_audio()
+        self._store_current_voice_language()
         current = self.character_combo.currentText()
         self._characters = state.load_characters()
         self.character_combo.blockSignals(True)
@@ -647,9 +669,11 @@ class CloudTtsSettingsWidget(QWidget):
         self.local_ref_path.setText(self._local_reference_audio_map.get(name, ""))
         self.local_ref_path.blockSignals(False)
         self._refresh_character_voice_options(name)
+        self._refresh_character_voice_language(name)
 
     def _on_character_changed(self, _index: int) -> None:
         self._store_local_reference_audio_for_name(self._current_voice_character_name)
+        self._store_voice_language_for_name(self._current_voice_character_name)
         self._current_voice_character_name = self.character_combo.currentText().strip()
         self._sync_reference_label()
 
@@ -693,6 +717,21 @@ class CloudTtsSettingsWidget(QWidget):
             self._local_reference_audio_map[name] = path
         else:
             self._local_reference_audio_map.pop(name, None)
+
+    def _store_current_voice_language(self) -> None:
+        self._store_voice_language_for_name(self.character_combo.currentText().strip())
+
+    def _store_voice_language_for_name(self, character_name: str) -> None:
+        name = (character_name or "").strip()
+        if not name or not hasattr(self, "character_voice_language"):
+            return
+        code = state.normalize_voice_language_code(
+            self.character_voice_language.currentData()
+        )
+        if code == "auto":
+            self._voice_language_map.pop(name, None)
+        else:
+            self._voice_language_map[name] = code
 
     def _reference_audio_for_upload(self, char: dict[str, Any]) -> tuple[Path | None, str]:
         name = str(char.get("name") or "").strip()
@@ -817,12 +856,14 @@ class CloudTtsSettingsWidget(QWidget):
     def _values(self) -> dict[str, Any]:
         self._store_current_character_voice_id()
         self._store_current_local_reference_audio()
+        self._store_current_voice_language()
         return {
             "model": str(self.model.currentData() or "speech-2.8-hd"),
             "default_voice_id": self._combo_voice_id(self.default_voice_id),
             "voice_id_map": dict(self._voice_id_map),
             "voice_id_versions": dict(self._voice_id_versions),
             "local_reference_audio_map": dict(self._local_reference_audio_map),
+            "voice_language_map": dict(self._voice_language_map),
             "language_boost": str(self.language_boost.currentData() or "auto"),
             "audio_format": str(self.audio_format.currentData() or "wav"),
             "sample_rate": int(self.sample_rate.currentData() or 32000),

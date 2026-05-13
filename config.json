@@ -3,6 +3,7 @@
     "language_boost":  "auto",
     "auto_clone_from_reference":  false,
     "local_reference_audio_map":  {},
+    "voice_language_map":  {},
     "voice_cache_path":  "cache/audio/cloud_tts_voice_cache.json",
     "clone_text":  "",
     "need_noise_reduction":  false,
