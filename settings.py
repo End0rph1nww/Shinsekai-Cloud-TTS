@@ -72,7 +72,7 @@ class MinimaxTtsSettingsWidget(QWidget):
         self.paragraph_split.setChecked(True)
         switch_lay.addWidget(self._check_row(self.paragraph_split))
 
-        self.prompt_constraint = self._checkbox("提示词约束：注入 MiniMax 语气标签指令（关闭则不注入）")
+        self.prompt_constraint = self._checkbox("提示词约束：注入 MiniMax 语气标签指令（关闭则不注入）⭐推荐开启")
         self.prompt_constraint.setChecked(False)
         switch_lay.addWidget(self._check_row(self.prompt_constraint))
         root.addWidget(switch_box)
