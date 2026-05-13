@@ -673,7 +673,7 @@ def prompt_constraint_enabled() -> bool:
     cfg = load_plugin_base_config()
     if "auto_prompt_constraint" in cfg:
         return bool(cfg.get("auto_prompt_constraint"))
-    return True
+    return False
 
 
 def prompt_constraint_active() -> bool:

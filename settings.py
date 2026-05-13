@@ -151,6 +151,10 @@ class MinimaxTtsSettingsWidget(QWidget):
         self.paragraph_split.setChecked(True)
         synth_lay.addWidget(self._check_row(self.paragraph_split))
 
+        self.prompt_constraint = self._checkbox("提示词约束：注入 MiniMax 语气标签指令（关闭则不监控）")
+        self.prompt_constraint.setChecked(False)
+        synth_lay.addWidget(self._check_row(self.prompt_constraint))
+
         self.request_timeout = self._spin()
         self.request_timeout.setRange(5, 600)
         self.request_timeout.setValue(120)
@@ -401,6 +405,9 @@ class MinimaxTtsSettingsWidget(QWidget):
         self.paragraph_split.setChecked(
             self._as_bool(values.get("paragraph_split_enabled"), True)
         )
+        self.prompt_constraint.setChecked(
+            self._as_bool(values.get("auto_prompt_constraint"), False)
+        )
         self.request_timeout.setValue(self._as_int(values.get("request_timeout"), 120))
         self.need_noise_reduction.setChecked(bool(values.get("need_noise_reduction", False)))
         self.need_volume_normalization.setChecked(
@@ -628,6 +635,7 @@ class MinimaxTtsSettingsWidget(QWidget):
             "pitch": int(self.pitch.value()),
             "emotion": str(self.emotion.currentData() or ""),
             "auto_clone_from_reference": self.auto_clone.isChecked(),
+            "auto_prompt_constraint": self.prompt_constraint.isChecked(),
             "paragraph_split_enabled": self.paragraph_split.isChecked(),
             "request_timeout": int(self.request_timeout.value()),
             "need_noise_reduction": self.need_noise_reduction.isChecked(),
