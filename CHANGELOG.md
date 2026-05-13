@@ -1,10 +1,12 @@
 # Cloud TTS 插件更新日志
 
-## 0.7.4 (2026-05-14)
+## 0.7.5 (2026-05-14)
 
 - **修复**: MiniMax TTS 合成参数按官方约束收口，避免非法配置触发 `2013 invalid params`。
 - **设置页**: `model`、`language_boost`、`audio_format`、`sample_rate`、`bitrate`、`channel`、`emotion` 改为枚举下拉框，只允许选择 MiniMax 官方支持值。
 - **运行时兜底**: adapter 会在发起 `/t2a_v2` 请求前归一化旧配置中的非法值，例如 `sample_rate=31000` 会落到 `32000`，`speed/vol/pitch` 会夹紧到官方范围。
+
+## 0.7.4 (2026-05-14)
 
 - **修复**: 回退 0.7.2 中 `load_plugin_base_config()` 读取顺序改动 — SDK 的 `plugin_root` 是数据目录而非包目录，读包目录优先会导致永远读不到用户的 `auto_prompt_constraint`
 
