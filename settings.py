@@ -6,7 +6,8 @@ import time
 from pathlib import Path
 from typing import Any
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QUrl
+from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -98,6 +99,18 @@ class CloudTtsSettingsWidget(QWidget):
         root.addWidget(switch_box)
 
         voice_box, voice_lay = self._section("角色语音配置")
+        voice_note = QLabel(
+            "<b>重要：</b>上传参考音频前请按 MiniMax 官方要求准备源音频："
+            "<b>mp3 / m4a / wav</b>，<b>10 秒 - 5 分钟</b>，<b>20MB 以内</b>。"
+            "建议使用干净人声、少背景噪音、少混响的单人台词。"
+            "可选示例音频要求更短：<b>小于 8 秒</b>。"
+        )
+        voice_note.setWordWrap(True)
+        voice_note.setTextFormat(Qt.TextFormat.RichText)
+        voice_note.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        voice_note.setStyleSheet("color: #c8c8c8; font-size: 12px;")
+        voice_lay.addWidget(voice_note)
+
         role_line = QWidget()
         role_line.setFixedHeight(ROW_HEIGHT)
         role_lay = QHBoxLayout(role_line)
@@ -107,14 +120,13 @@ class CloudTtsSettingsWidget(QWidget):
         self.refresh_roles = QPushButton("刷新角色")
         self.refresh_roles.setFixedHeight(FIELD_HEIGHT)
         self.refresh_roles.clicked.connect(self._reload_characters)
+        self.open_card_ref_btn = QPushButton("打开角色卡音频位置")
+        self.open_card_ref_btn.setFixedHeight(FIELD_HEIGHT)
+        self.open_card_ref_btn.clicked.connect(self._open_current_card_reference_audio)
         role_lay.addWidget(self.character_combo, stretch=1)
         role_lay.addWidget(self.refresh_roles)
+        role_lay.addWidget(self.open_card_ref_btn)
         voice_lay.addWidget(role_line)
-
-        self.ref_path = QLabel("")
-        self.ref_path.setWordWrap(True)
-        self.ref_path.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-        voice_lay.addWidget(self.ref_path)
 
         local_ref_field = QWidget()
         local_ref_lay = QHBoxLayout(local_ref_field)
@@ -134,6 +146,15 @@ class CloudTtsSettingsWidget(QWidget):
         local_ref_lay.addWidget(self.clear_local_ref_btn)
         voice_lay.addWidget(self._row("本地参考音频", local_ref_field))
 
+        upload_hint = QLabel(
+            "上传参考音频：使用上方<b>本地参考音频</b>生成并绑定当前角色的 voice_id；"
+            "这里不再自动回退使用角色卡里的参考音频。"
+        )
+        upload_hint.setWordWrap(True)
+        upload_hint.setTextFormat(Qt.TextFormat.RichText)
+        upload_hint.setStyleSheet("color: #888; font-size: 12px; padding-left: 146px;")
+        voice_lay.addWidget(upload_hint)
+
         self.character_voice_id = self._voice_combo()
         self.character_voice_id.lineEdit().setPlaceholderText("该角色专用 voice_id")
         self.character_voice_id.currentIndexChanged.connect(
@@ -144,15 +165,7 @@ class CloudTtsSettingsWidget(QWidget):
         )
         voice_lay.addWidget(self._row("角色 voice_id", self.character_voice_id))
 
-        self.character_voice_language = self._combo()
-        for code, label in state.VOICE_LANGUAGE_OPTIONS:
-            self.character_voice_language.addItem(label, code)
-        self.character_voice_language.currentIndexChanged.connect(
-            lambda _index: self._store_current_voice_language()
-        )
-        voice_lay.addWidget(self._row("角色语音语言", self.character_voice_language))
-
-        self.upload_btn = QPushButton("上传参考音频并克隆 voice_id")
+        self.upload_btn = QPushButton("上传本地参考音频并生成 voice_id")
         self.upload_btn.setFixedHeight(FIELD_HEIGHT)
         self.upload_btn.clicked.connect(self._upload_selected_character)
 
@@ -176,7 +189,6 @@ class CloudTtsSettingsWidget(QWidget):
         voice_lay.addWidget(self._check_row(self.need_volume_normalization))
 
         self.voice_cache_path = self._line_edit("cache/audio/cloud_tts_voice_cache.json")
-        voice_lay.addWidget(self._row("自动克隆缓存", self.voice_cache_path))
 
         root.addWidget(voice_box)
 
@@ -281,7 +293,7 @@ class CloudTtsSettingsWidget(QWidget):
             self.emotion.addItem(item or "不固定", item)
         synth_lay.addWidget(self._row("默认情绪", self.emotion))
 
-        self.auto_clone = self._checkbox("未找到 voice_id 时，从角色参考音频自动克隆")
+        self.auto_clone = self._checkbox("未找到 voice_id 时，从本地参考音频自动克隆")
         self.auto_clone.setChecked(False)
         synth_lay.addWidget(self._check_row(self.auto_clone))
 
@@ -354,7 +366,7 @@ class CloudTtsSettingsWidget(QWidget):
             "先在角色下拉框选择角色，再在约束版本里选择要使用的语言模板；上方文本框可直接修改当前角色的提示词。"
             "保存角色版本后会变为该角色自己的手改版；保存默认模板时只同步同语种、且仍跟随母版的角色版本。<br/><br/>"
             "<b>5. 合成参数：</b>模型建议选 speech-2.8-hd；语速/音量/音高/情绪可按需微调。"
-            "自动克隆开关：未找到 voice_id 时从角色参考音频自动复刻。"
+            "自动克隆开关：未找到 voice_id 时从本地参考音频自动复刻。"
         )
         body.setWordWrap(True)
         body.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
@@ -510,9 +522,8 @@ class CloudTtsSettingsWidget(QWidget):
         self._local_reference_audio_map = self._coerce_path_map(
             values.get("local_reference_audio_map")
         )
-        self._voice_language_map = state.coerce_voice_language_map(
-            values.get("voice_language_map")
-        )
+        # 角色语音语言选择暂时从配置页移除，避免旧配置在隐藏状态下继续影响合成。
+        self._voice_language_map = {}
         self._ensure_versions_from_selected_map()
         self._refresh_default_voice_options(str(values.get("default_voice_id") or ""))
         self._set_combo(
@@ -619,6 +630,8 @@ class CloudTtsSettingsWidget(QWidget):
         self.character_voice_id.blockSignals(False)
 
     def _refresh_character_voice_language(self, character_name: str) -> None:
+        if not hasattr(self, "character_voice_language"):
+            return
         code = self._voice_language_map.get(character_name, "auto")
         self.character_voice_language.blockSignals(True)
         self._set_combo(
@@ -654,17 +667,9 @@ class CloudTtsSettingsWidget(QWidget):
     def _sync_reference_label(self) -> None:
         char = self._selected_character()
         if not char:
-            self.ref_path.setText("未找到角色。")
             self.local_ref_path.setText("")
             return
-        path = state.resolve_reference_audio(char)
         name = str(char.get("name") or "").strip()
-        if path and path.is_file():
-            self.ref_path.setText(f"参考音频：{path}")
-        elif path:
-            self.ref_path.setText(f"参考音频不存在：{path}")
-        else:
-            self.ref_path.setText("该角色没有 refer_audio_path。")
         self.local_ref_path.blockSignals(True)
         self.local_ref_path.setText(self._local_reference_audio_map.get(name, ""))
         self.local_ref_path.blockSignals(False)
@@ -676,6 +681,21 @@ class CloudTtsSettingsWidget(QWidget):
         self._store_voice_language_for_name(self._current_voice_character_name)
         self._current_voice_character_name = self.character_combo.currentText().strip()
         self._sync_reference_label()
+
+    def _open_current_card_reference_audio(self) -> None:
+        char = self._selected_character()
+        if not char:
+            QMessageBox.warning(self, "Cloud TTS", "请先选择角色。")
+            return
+        path = state.resolve_reference_audio(char)
+        if not path:
+            QMessageBox.information(self, "Cloud TTS", "当前角色卡没有 refer_audio_path。")
+            return
+        if not path.exists():
+            QMessageBox.warning(self, "Cloud TTS", f"角色卡音频路径不存在：\n{path}")
+            return
+        target = path if path.is_dir() else path.parent
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(target)))
 
     def _choose_local_reference_audio(self) -> None:
         char = self._selected_character()
@@ -738,7 +758,7 @@ class CloudTtsSettingsWidget(QWidget):
         local_path = self._local_reference_audio_map.get(name, "").strip()
         if local_path:
             return state.project_path(local_path).resolve(), "本地参考音频"
-        return state.resolve_reference_audio(char), "角色参考音频"
+        return None, "本地参考音频"
 
     def _store_current_character_voice_id(self) -> None:
         name = self.character_combo.currentText().strip()
@@ -863,7 +883,7 @@ class CloudTtsSettingsWidget(QWidget):
             "voice_id_map": dict(self._voice_id_map),
             "voice_id_versions": dict(self._voice_id_versions),
             "local_reference_audio_map": dict(self._local_reference_audio_map),
-            "voice_language_map": dict(self._voice_language_map),
+            "voice_language_map": {},
             "language_boost": str(self.language_boost.currentData() or "auto"),
             "audio_format": str(self.audio_format.currentData() or "wav"),
             "sample_rate": int(self.sample_rate.currentData() or 32000),
@@ -1326,7 +1346,7 @@ class CloudTtsSettingsWidget(QWidget):
         self._store_current_local_reference_audio()
         path, source_label = self._reference_audio_for_upload(char)
         if not path or not path.is_file():
-            QMessageBox.warning(self, "Cloud TTS", f"{source_label}不存在。")
+            QMessageBox.warning(self, "Cloud TTS", "请先选择一个存在的本地参考音频。")
             return
         if not str(state.get_cloud_extra().get("api_key") or "").strip():
             QMessageBox.warning(self, "Cloud TTS", "请先在 API 设定页填写 MiniMax API KEY。")
