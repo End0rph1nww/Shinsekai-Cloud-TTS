@@ -285,9 +285,7 @@ def _patch_text_processor() -> None:
 
     @wraps(current)
     def wrapped(self: Any, text: str, *args: Any, **kwargs: Any) -> str:
-        if state.plugin_manifest_enabled() and state.is_cloud_tts_provider(
-            state.current_tts_provider()
-        ):
+        if state.translate_tone_tag_protection_active():
             protected, placeholders = state.protect_tone_tags(text)
             cleaned = current(self, protected, *args, **kwargs)
             return state.restore_tone_tags(cleaned, placeholders)

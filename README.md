@@ -7,7 +7,7 @@ MiniMax speech-2.x 语音合成插件。它会向 Shinsekai 注册一个新的 T
 | 字段 | 内容 |
 | --- | --- |
 | 插件 ID | `com.shinsekai.cloud_tts` |
-| 版本 | `0.9.6` |
+| 版本 | `0.9.7` |
 | 作者 | `End0rph1nww` |
 | 插件入口 | `plugins.cloud_tts.plugin:CloudTtsPlugin` |
 | TTS 引擎标识 | `minimax-tts` |
@@ -17,13 +17,14 @@ MiniMax speech-2.x 语音合成插件。它会向 Shinsekai 注册一个新的 T
 
 - 通过 `register_tts_adapter` 注册 `minimax-tts` TTS 适配器。
 - 主菜单的 API 设置页只显示 `MiniMax API KEY` 和 `MiniMax Base URL`。
-- MiniMax 的模型、voice_id、参考音频语言和提示词约束，都放在插件设置页维护；基础合成参数使用插件内置默认值。
+- MiniMax 的模型、默认 voice_id、角色 voice_id、参考音频语言、提示词约束和语气标签保护，都放在插件设置页维护；基础合成参数使用插件内置默认值。
 - 支持 MiniMax `/t2a_v2`、`/files/upload` 和 `/voice_clone` 接口。
 - voice_id 查找顺序为：角色绑定 voice_id、默认兜底 voice_id、已缓存的克隆 voice_id；需要生成新 voice_id 时，请在角色语音配置里手动上传本地参考音频。
 - TTS 分段功能已由主程序接管（API 设置页「TTS 分句发送」开关），插件不再自行处理分段。
 - 只有当插件启用，并且主程序当前 TTS 引擎已经切到 `minimax-tts` 时，插件才会向模板注入 MiniMax 语气标签约束。
+- 语气标签保护开启时，插件会在主程序清理括号内容前保护 `translate` 里的 MiniMax 标签，避免 `(laughs)`、`(sighs)` 等语气标签在合成前被删除。
 - 提示词模板支持中文、日语、粤语、英语四套固定母版；每个角色也会自动生成四套默认提示词，可在插件设置页按角色选择、修改和保存。模板语言下拉框只用于编辑，不决定运行时注入语言；实际注入语言跟随主程序当前语音语言。
-- 是否使用 MiniMax 作为主 TTS 引擎，完全由主菜单 API 设置页里的 TTS 引擎选择决定；插件设置页只保存插件行为参数。
+- 是否使用 MiniMax 作为主 TTS 引擎，完全由主菜单 API 设置页里的 TTS 引擎选择决定；插件设置页内的模型、默认 voice_id、角色 voice_id、参考音频语言和提示词约束开关会在修改时分别自动保存。
 - 当用户在插件面板禁用本插件时，`minimax-tts` 不再注册到主菜单 TTS 列表；如果当前主 TTS 仍是 `minimax-tts`，插件会把它清为 `none`，避免下次启动留下失效入口。
 
 ## 安装方式
@@ -116,9 +117,9 @@ tts_extra_configs:
 - 参考音频语言：用于 MiniMax 识别参考音频并创建 voice_id；不确定时保持 `auto`。
 - 提示词模板：只提供中文、日语、粤语、英语四套固定默认模板。修改某个角色的对应语言模板后，插件会根据主程序当前选择的语音语言自动注入该语言约束。
 
-插件页底部只有一个 `保存配置` 按钮。点击后只会保存插件行为参数，不会修改主菜单 API 设置页里的 `tts_provider`。
+插件设置页不再提供全局 `保存配置` 按钮。模型、默认 voice_id、角色 voice_id、本地参考音频、参考音频语言和提示词约束开关都会在修改时分别自动保存；提示词模板仍使用模板区里的 `保存当前版本` 按钮保存。
 
-MiniMax 是否成为主程序实际使用的 TTS 引擎，由主菜单 API 设置页保存后的 TTS 引擎状态决定。也就是说：在主菜单选择 `minimax-tts` 并点击保存后，当前系统提示词和后续生成的模板会自动加入 MiniMax 语气标签约束；如果主菜单切换到 GPT-SoVITS、Genie TTS 或 `none` 并点击保存，当前系统提示词里的 MiniMax 语气标签约束会自动移除。插件设置页保存不会修改主 TTS 选择，也不会触发系统提示词注入。
+MiniMax 是否成为主程序实际使用的 TTS 引擎，由主菜单 API 设置页保存后的 TTS 引擎状态决定。也就是说：在主菜单选择 `minimax-tts` 并点击保存后，当前系统提示词和后续生成的模板会自动加入 MiniMax 语气标签约束；如果主菜单切换到 GPT-SoVITS、Genie TTS 或 `none` 并点击保存，当前系统提示词里的 MiniMax 语气标签约束会自动移除。插件设置页内的自动保存不会修改主 TTS 选择，也不会触发系统提示词注入。
 
 如果主聊天进程已经启动，保存后请重启聊天进程，让 TTS adapter 重新读取最新配置。
 

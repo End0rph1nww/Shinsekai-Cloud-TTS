@@ -14,7 +14,7 @@ import yaml
 PROVIDER_SLUG = "minimax-tts"
 PLUGIN_ID = "com.shinsekai.cloud_tts"
 PLUGIN_ENTRY = "plugins.cloud_tts.plugin:CloudTtsPlugin"
-PLUGIN_VERSION = "0.9.6"
+PLUGIN_VERSION = "0.9.7"
 
 LEGACY_PROVIDER_SLUG = "cloud-tts"
 LEGACY_PLUGIN_ID = "com.shinsekai.minimax_tts"
@@ -34,6 +34,7 @@ PLUGIN_STATE_KEYS = {
     "local_reference_audio_map",
     "reference_audio_language_map",
     "auto_prompt_constraint",
+    "protect_translate_tone_tags",
 }
 
 CONSTRAINT_START = "<<<CLOUD_TTS_TONE_CONSTRAINT_START>>>"
@@ -162,30 +163,44 @@ def voice_language_label(value: Any) -> str:
 
 
 def _tone_tag_lines() -> str:
-    return """(laughs)（笑声）：开心、调侃、得意、明显笑出来时使用。
-(chuckle)（轻笑）：克制的轻笑、轻松吐槽、小声笑时使用。
-(coughs)（咳嗽）：咳嗽、被呛到、掩饰尴尬时使用。
-(clear-throat)（清嗓子）：准备开口、切换到正式语气、收束气氛时使用。
-(groans)（呻吟）：痛苦、费力、困扰、不情愿时使用。
-(breath)（正常换气）：柔和停顿、贴近感、轻声说话、自然换气时使用。
-(pant)（喘气）：跑动后、慌乱、急促、体力消耗时使用。
-(inhale)（吸气）：开口前吸气、震惊前、准备说重要内容时使用。
-(exhale)（呼气）：释然、放松、疲惫、压下情绪后使用。
-(gasps)（倒吸气）：惊讶、震惊、突然发现异常、危险逼近时使用。
-(sniffs)（吸鼻子）：委屈、鼻音、快哭但忍住时使用。
-(sighs)（叹气）：无奈、担心、疲惫、提醒风险、收束语气时使用。
-(snorts)（喷鼻息）：不屑、忍笑、轻蔑、得意反应时使用。
-(burps)（打嗝）：打嗝或故意滑稽时使用。
-(lip-smacking)（咂嘴）：犹豫、思考、略带不满、准备评价时使用。
-(humming)（哼唱）：轻声哼、愉快、思考、拖长语气时使用。
-(hissing)（嘶嘶声）：压低声音、警告、危险感、阴沉语气时使用。
-(emm)（嗯）：犹豫、思考、短暂停顿、组织语言时使用。
-(sneezes)（喷嚏）：喷嚏。"""
+    return """(laughs)：开心、调侃、得意、明显笑出来时使用。
+(chuckle)：克制的轻笑、轻松吐槽、小声笑时使用。
+(coughs)：咳嗽、被呛到、掩饰尴尬时使用。
+(clear-throat)：准备开口、切换到正式语气、收束气氛时使用。
+(groans)：痛苦、费力、困扰、不情愿时使用。
+(breath)：柔和停顿、贴近感、轻声说话、自然换气时使用。
+(pant)：跑动后、慌乱、急促、体力消耗时使用。
+(inhale)：开口前吸气、震惊前、准备说重要内容时使用。
+(exhale)：释然、放松、疲惫、压下情绪后使用。
+(gasps)：惊讶、震惊、突然发现异常、危险逼近时使用。
+(sniffs)：委屈、鼻音、快哭但忍住时使用。
+(sighs)：无奈、担心、疲惫、提醒风险、收束语气时使用。
+(snorts)：不屑、忍笑、轻蔑、得意反应时使用。
+(burps)：打嗝或故意滑稽时使用。
+(lip-smacking)：犹豫、思考、略带不满、准备评价时使用。
+(humming)：轻声哼、愉快、思考、拖长语气时使用。
+(hissing)：压低声音、警告、危险感、阴沉语气时使用。
+(emm)：犹豫、思考、短暂停顿、组织语言时使用。
+(sneezes)：喷嚏。"""
+
+
+def _dialog_schema_example(translate_hint: str) -> str:
+    return f"""{{
+  "dialog": [
+    {{
+      "character_name": "角色名",
+      "sprite": "str, 对应的立绘ID字符串，例如 01, 02",
+      "speech": "该角色说的中文台词",
+      "effect": "角色的特效名称（可选），选择范围在 LEAVE、SHOCKED、DISAPPOINTED、ATTENTION 内",
+      "translate": "{translate_hint}"
+    }}
+  ]
+}}"""
 
 
 def _language_instruction_block(code: str) -> str:
     if code == "zh":
-        return """角色语音目标：中文。
+        return f"""角色语音目标：中文。
 translate 字段不是外语翻译，而是 Cloud TTS 的中文合成文本。
 中文适配规则：
 1. translate 必须使用自然简体中文，可以与 speech 完全相同，也可以在不改变语义的前提下改得更口语、更适合朗读。
@@ -194,9 +209,9 @@ translate 字段不是外语翻译，而是 Cloud TTS 的中文合成文本。
 4. 标签优先放在句首或自然停顿处，例如“(chuckle)前辈，这个我来观测。”、“前辈，(sighs)这个风险要先压住。”
 5. 不要把标签翻译成“笑声”“叹气”，也不要写成舞台说明。
 中文示例：
-{"character_name":"海漫華淡","speech":"前辈，这个我来观测。问题不大。","translate":"(chuckle)前辈，这个我来观测。问题不大。","sprite":"11"}"""
+{_dialog_schema_example("该句台词的中文 TTS 文本（与系统语音目标语言一致，可加入语气标签）")}"""
     if code == "ja":
-        return """角色语音目标：日语。
+        return f"""角色语音目标：日语。
 translate 字段是 Cloud TTS 的日语合成文本。
 日语适配规则：
 1. translate 要把 speech 的中文台词改写为自然日语，不要逐字硬翻。
@@ -205,9 +220,9 @@ translate 字段是 Cloud TTS 的日语合成文本。
 4. 标签适合放在句首或日语停顿处，例如“(chuckle)先輩、これは華淡が観測します。”、“えっと……(sighs)先輩、それは少し危ないです。”
 5. speech 仍然保持简体中文，不能把日语或标签写进 speech。
 日语示例：
-{"character_name":"海漫華淡","speech":"前辈，这个我来观测。问题不大。","translate":"(chuckle)先輩、これは華淡が観測します。問題ありません。","sprite":"11"}"""
+{_dialog_schema_example("该句台词的日语译文（与系统语音目标语言一致，可加入语气标签）")}"""
     if code == "yue":
-        return """角色语音目标：粤语。
+        return f"""角色语音目标：粤语。
 translate 字段是 Cloud TTS 的粤语合成文本。
 粤语适配规则：
 1. translate 要把 speech 的中文台词改写为自然粤语口语，可以使用“啦”“喎”“啫”“咁”“唔”“冇”等粤语表达。
@@ -216,9 +231,9 @@ translate 字段是 Cloud TTS 的粤语合成文本。
 4. 标签适合放在句首或自然停顿处，例如“(chuckle)前辈，呢个我嚟睇住，问题唔大。”、“(sighs)前辈，呢度要小心啲。”
 5. speech 仍然保持简体中文，不能把粤语写进 speech。
 粤语示例：
-{"character_name":"海漫華淡","speech":"前辈，这个我来观测。问题不大。","translate":"(chuckle)前辈，呢个我嚟睇住，问题唔大。","sprite":"11"}"""
+{_dialog_schema_example("该句台词的粤语译文（与系统语音目标语言一致，可加入语气标签）")}"""
     if code == "en":
-        return """角色语音目标：英语。
+        return f"""角色语音目标：英语。
 translate 字段是 Cloud TTS 的英语合成文本。
 英语适配规则：
 1. translate 要把 speech 的中文台词改写为自然口语英语，不要逐字硬翻。
@@ -227,7 +242,7 @@ translate 字段是 Cloud TTS 的英语合成文本。
 4. 语气标签仍然使用英文括号标签，不要改写成 stage directions。
 5. speech 仍然保持简体中文，不能把英语或标签写进 speech。
 英语示例：
-{"character_name":"海漫華淡","speech":"前辈，这个我来观测。问题不大。","translate":"(chuckle)Senpai, I’ll keep an eye on this. It’s not a big problem.","sprite":"11"}"""
+{_dialog_schema_example("该句台词的英语译文（与系统语音目标语言一致，可加入语气标签）")}"""
     return """角色语音目标：自动。
 请根据插件里为当前角色选择的语音语言生成 translate；如果没有角色语言设置，则跟随主菜单语音语言。
 自动适配规则：
@@ -399,6 +414,12 @@ def ensure_default_prompt_versions(store: dict[str, Any]) -> bool:
             if not record.get(key):
                 record[key] = default_record[key]
                 changed = True
+        if (
+            record.get("source") == "default"
+            and record.get("constraint_text") != default_record["constraint_text"]
+        ):
+            record["constraint_text"] = default_record["constraint_text"]
+            changed = True
         if _normalize_prompt_language(record.get("language")) != code:
             record["language"] = code
             changed = True
@@ -673,6 +694,10 @@ def _find_custom_constraint_record_for_language(
     # 兼容旧版隐藏版本：如果同语言旧版本是手改模板，不再回退到硬编码默认模板。
     for vid, record in versions.items():
         if vid == default_vid or not isinstance(record, dict):
+            continue
+        # 旧版迁移残留的默认版本可能带着当前语言标记，但文本仍是旧的 auto 模板。
+        # 这类默认记录不能盖过固定四语言槽位，否则会把粤语等语言误注入为自动。
+        if record.get("source") == "default":
             continue
         record_language = _normalize_prompt_language(record.get("language")) or _prompt_language_from_version_id(vid)
         if record_language != language:
@@ -1564,6 +1589,23 @@ def prompt_constraint_active() -> bool:
     if not is_cloud_tts_provider(current_tts_provider()):
         return False
     return prompt_constraint_enabled()
+
+
+def translate_tone_tag_protection_enabled() -> bool:
+    cfg = load_plugin_base_config()
+    if "protect_translate_tone_tags" in cfg:
+        return bool(cfg.get("protect_translate_tone_tags"))
+    # 旧版本没有这个开关时保持原行为：Cloud TTS 会自动保护 MiniMax 语气标签。
+    return True
+
+
+def translate_tone_tag_protection_active() -> bool:
+    """Cloud TTS 当前启用时，是否保留 translate 中的 MiniMax 语气标签。"""
+    if not plugin_manifest_enabled():
+        return False
+    if not is_cloud_tts_provider(current_tts_provider()):
+        return False
+    return translate_tone_tag_protection_enabled()
 
 
 def plugin_manifest_enabled() -> bool:

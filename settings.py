@@ -9,7 +9,6 @@ from typing import Any
 from PySide6.QtCore import Qt, QUrl
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
-    QCheckBox,
     QComboBox,
     QDialog,
     QFileDialog,
@@ -50,9 +49,13 @@ class CloudTtsSettingsWidget(QWidget):
         self._reference_audio_language_map: dict[str, str] = {}
         self._current_voice_character_name = ""
         self._current_template_character_name = ""
+        self._prompt_constraint_enabled = False
+        self._tone_tag_protection_enabled = True
+        self._loading_values = True
         self._build_ui()
         self._load_values()
         self._reload_characters()
+        self._loading_values = False
 
     def showEvent(self, event: Any) -> None:
         """页签切到插件时自动刷新角色列表."""
@@ -80,29 +83,51 @@ class CloudTtsSettingsWidget(QWidget):
 
         root.addWidget(self._guide_block())
 
-        switch_box, switch_lay = self._section("功能开关")
-        self.prompt_constraint = self._checkbox("提示词约束：注入 MiniMax 语气标签指令（关闭则不注入）⭐推荐开启")
-        self.prompt_constraint.setChecked(False)
-        switch_lay.addWidget(self._check_row(self.prompt_constraint))
+        api_box, api_lay = self._section("模型与兜底声线")
+        self.model = self._combo()
+        for item in VALID_MODELS:
+            self.model.addItem(item, item)
+        self.model.currentIndexChanged.connect(lambda _index: self._on_model_changed())
+        api_lay.addWidget(self._row("模型", self.model))
 
-        tts_split_hint = QLabel("⭐ 推荐前往主菜单 API 设置页，关闭「启用分句合成语音」(tts_split_enabled) 后点击<b>保存配置</b>")
-        tts_split_hint.setWordWrap(True)
-        tts_split_hint.setTextFormat(Qt.TextFormat.RichText)
-        tts_split_hint.setStyleSheet("color: #888; font-size: 12px; padding-left: 146px;")
-        switch_lay.addWidget(tts_split_hint)
+        self.default_voice_id = self._voice_combo()
+        self.default_voice_id.lineEdit().setPlaceholderText("未匹配角色时使用的兜底 voice_id")
+        self.default_voice_id.currentIndexChanged.connect(
+            lambda _index: self._on_default_voice_changed()
+        )
+        self.default_voice_id.lineEdit().editingFinished.connect(
+            self._on_default_voice_changed
+        )
+        api_lay.addWidget(self._row("默认 voice_id", self.default_voice_id))
+        root.addWidget(api_box)
+
+        switch_box, switch_lay = self._section("功能开关")
+        switch_lay.addWidget(
+            self._feature_label(
+                "⭐ 提示词约束：推荐开启，体验完整效果；插件会按主程序语音语言注入对应角色模板。"
+            )
+        )
+        self.prompt_constraint_btn = QPushButton()
+        self.prompt_constraint_btn.setFixedHeight(FIELD_HEIGHT)
+        self.prompt_constraint_btn.clicked.connect(self._toggle_prompt_constraint)
+        switch_lay.addWidget(self._row("提示词约束", self.prompt_constraint_btn))
+        switch_lay.addWidget(
+            self._feature_label(
+                "⭐ 语气标签保护：推荐开启。主程序会清理括号内容；开启后插件会接管 translate 的语气标签保护，避免 (laughs)、(sighs) 等标签在合成前被删掉。"
+            )
+        )
+        self.tone_tag_protection_btn = QPushButton()
+        self.tone_tag_protection_btn.setFixedHeight(FIELD_HEIGHT)
+        self.tone_tag_protection_btn.clicked.connect(self._toggle_tone_tag_protection)
+        switch_lay.addWidget(self._row("语气标签保护", self.tone_tag_protection_btn))
+        switch_lay.addWidget(
+            self._feature_label(
+                "⭐ TTS 分句：推荐到主菜单 API 页关闭「启用分句合成语音」，避免云端语音被切碎。"
+            )
+        )
         root.addWidget(switch_box)
 
         voice_box, voice_lay = self._section("角色语音配置")
-        voice_note = QLabel(
-            "<b>重要：</b>上传参考音频前请按 MiniMax 官方要求准备源音频："
-            "<b>mp3 / m4a / wav</b>，<b>10 秒 - 5 分钟</b>，<b>20MB 以内</b>。"
-            "建议使用干净人声、少背景噪音、少混响的单人台词。"
-        )
-        voice_note.setWordWrap(True)
-        voice_note.setTextFormat(Qt.TextFormat.RichText)
-        voice_note.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-        voice_note.setStyleSheet("color: #c8c8c8; font-size: 12px;")
-        voice_lay.addWidget(voice_note)
 
         role_line = QWidget()
         role_line.setFixedHeight(ROW_HEIGHT)
@@ -127,7 +152,7 @@ class CloudTtsSettingsWidget(QWidget):
         local_ref_lay.setSpacing(8)
         self.local_ref_path = self._line_edit("")
         self.local_ref_path.setPlaceholderText("可选：不受主程序时长限制的本地参考音频")
-        self.local_ref_path.editingFinished.connect(self._store_current_local_reference_audio)
+        self.local_ref_path.editingFinished.connect(self._on_local_reference_changed)
         self.choose_local_ref_btn = QPushButton("选择")
         self.choose_local_ref_btn.setFixedHeight(FIELD_HEIGHT)
         self.choose_local_ref_btn.clicked.connect(self._choose_local_reference_audio)
@@ -138,15 +163,6 @@ class CloudTtsSettingsWidget(QWidget):
         local_ref_lay.addWidget(self.choose_local_ref_btn)
         local_ref_lay.addWidget(self.clear_local_ref_btn)
         voice_lay.addWidget(self._row("本地参考音频", local_ref_field))
-
-        upload_hint = QLabel(
-            "上传参考音频：使用上方<b>本地参考音频</b>生成并绑定当前角色的 voice_id；"
-            "这里不再自动回退使用角色卡里的参考音频。"
-        )
-        upload_hint.setWordWrap(True)
-        upload_hint.setTextFormat(Qt.TextFormat.RichText)
-        upload_hint.setStyleSheet("color: #888; font-size: 12px; padding-left: 146px;")
-        voice_lay.addWidget(upload_hint)
 
         self.reference_audio_language = self._combo()
         reference_language_options = (
@@ -159,17 +175,17 @@ class CloudTtsSettingsWidget(QWidget):
         for code, label in reference_language_options:
             self.reference_audio_language.addItem(label, code)
         self.reference_audio_language.currentIndexChanged.connect(
-            lambda _index: self._store_current_reference_audio_language()
+            lambda _index: self._on_reference_audio_language_changed()
         )
         voice_lay.addWidget(self._row("参考音频语言", self.reference_audio_language))
 
         self.character_voice_id = self._voice_combo()
         self.character_voice_id.lineEdit().setPlaceholderText("该角色专用 voice_id")
         self.character_voice_id.currentIndexChanged.connect(
-            lambda _index: self._store_current_character_voice_id()
+            lambda _index: self._on_character_voice_changed()
         )
         self.character_voice_id.lineEdit().editingFinished.connect(
-            self._store_current_character_voice_id
+            self._on_character_voice_changed
         )
         voice_lay.addWidget(self._row("角色 voice_id", self.character_voice_id))
 
@@ -213,15 +229,6 @@ class CloudTtsSettingsWidget(QWidget):
         self.constraint_text_edit.setMinimumHeight(200)
         template_lay.addWidget(self.constraint_text_edit)
 
-        template_hint = QLabel(
-            "提示词模板只提供中文、日语、粤语、英语四套固定默认模板。"
-            "你可以为每个角色分别修改对应语言模板；运行时插件会读取主程序当前选择的语音语言，"
-            "自动注入该角色对应语言的约束词，不由这里的下拉框决定。"
-        )
-        template_hint.setWordWrap(True)
-        template_hint.setStyleSheet("color: #888; font-size: 12px;")
-        template_lay.addWidget(template_hint)
-
         template_actions = QWidget()
         template_actions.setFixedHeight(ROW_HEIGHT)
         template_actions_lay = QHBoxLayout(template_actions)
@@ -246,17 +253,6 @@ class CloudTtsSettingsWidget(QWidget):
         template_lay.addWidget(template_actions)
         root.addWidget(template_box)
 
-        api_box, api_lay = self._section("模型与兜底声线")
-        self.model = self._combo()
-        for item in VALID_MODELS:
-            self.model.addItem(item, item)
-        api_lay.addWidget(self._row("模型", self.model))
-
-        self.default_voice_id = self._voice_combo()
-        self.default_voice_id.lineEdit().setPlaceholderText("未匹配角色时使用的保底 voice_id")
-        api_lay.addWidget(self._row("无角色兜底 voice_id", self.default_voice_id))
-        root.addWidget(api_box)
-
         root.addStretch(1)
 
         outer.addWidget(scroll, stretch=1)
@@ -271,21 +267,9 @@ class CloudTtsSettingsWidget(QWidget):
         sep.setFrameShadow(QFrame.Shadow.Sunken)
         foot_lay.addWidget(sep)
 
-        actions = QHBoxLayout()
-        actions.setContentsMargins(12, 8, 12, 8)
-        actions.setSpacing(12)
-        self.save_btn = QPushButton("保存配置")
-        self.save_btn.clicked.connect(self._save)
-        self.save_btn.setFixedHeight(FIELD_HEIGHT)
-        self.save_btn.setMinimumWidth(160)
-        self.save_btn.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
-        actions.addWidget(self.save_btn)
-        actions.addStretch(1)
-        foot_lay.addLayout(actions)
-
         self.status = QLabel("")
         self.status.setWordWrap(True)
-        self.status.setContentsMargins(12, 0, 12, 8)
+        self.status.setContentsMargins(12, 8, 12, 8)
         foot_lay.addWidget(self.status)
         outer.addWidget(foot)
 
@@ -312,6 +296,7 @@ class CloudTtsSettingsWidget(QWidget):
             "<b>1. 前置条件：</b>先在首页 / 主菜单 API 设置页选择 MiniMax TTS，填写 API KEY 和 BASE URL 并保存。"
             "本页不重复保存这两个连接凭证。<br/><br/>"
             "<b>2. 功能开关：</b>建议开启<b>提示词约束</b>，向 LLM 注入语气标签指令让语音表现更丰富。"
+            "建议保持<b>语气标签保护</b>开启，避免主程序清理括号时删掉 translate 里的语气标签。"
             "TTS 分段功能已由主程序接管，请在 API 设置页配置「TTS 分句发送」。<br/><br/>"
             "<b>3. 角色 voice_id：</b>选择角色后在下拉框中选择或粘贴 voice_id，支持多版本历史管理。"
             "也可选择本地参考音频后上传克隆 voice_id，绕开主程序参考音频时长限制；"
@@ -342,13 +327,13 @@ class CloudTtsSettingsWidget(QWidget):
         lay.addWidget(field, stretch=1)
         return row
 
-    def _check_row(self, checkbox: QCheckBox) -> QWidget:
-        row = QWidget()
-        row.setFixedHeight(34)
-        lay = QHBoxLayout(row)
-        lay.setContentsMargins(LABEL_WIDTH + 12, 0, 0, 0)
-        lay.addWidget(checkbox)
-        return row
+    def _feature_label(self, text: str) -> QLabel:
+        label = QLabel(text)
+        label.setWordWrap(True)
+        label.setTextFormat(Qt.TextFormat.RichText)
+        label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        label.setStyleSheet("color: #cfcfcf; font-size: 12px; font-weight: 500;")
+        return label
 
     def _prepare_field(self, field: QWidget) -> QWidget:
         field.setFixedHeight(FIELD_HEIGHT)
@@ -374,12 +359,6 @@ class CloudTtsSettingsWidget(QWidget):
         combo.setEditable(True)
         combo.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
         return combo
-
-    def _checkbox(self, text: str) -> QCheckBox:
-        checkbox = QCheckBox(text)
-        checkbox.setFixedHeight(30)
-        checkbox.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        return checkbox
 
     def _apply_field_style(self) -> None:
         self.setStyleSheet("")
@@ -407,6 +386,78 @@ class CloudTtsSettingsWidget(QWidget):
                 return False
         return bool(value)
 
+    def _refresh_prompt_constraint_button(self) -> None:
+        if not hasattr(self, "prompt_constraint_btn"):
+            return
+        if self._prompt_constraint_enabled:
+            self.prompt_constraint_btn.setText("已开启，点击关闭")
+            self.prompt_constraint_btn.setStyleSheet(
+                "QPushButton { color: #d7ffd7; border: 1px solid #3a7c46; }"
+            )
+        else:
+            self.prompt_constraint_btn.setText("已关闭，点击开启")
+            self.prompt_constraint_btn.setStyleSheet(
+                "QPushButton { color: #cfcfcf; border: 1px solid #555; }"
+            )
+
+    def _refresh_tone_tag_protection_button(self) -> None:
+        if not hasattr(self, "tone_tag_protection_btn"):
+            return
+        if self._tone_tag_protection_enabled:
+            self.tone_tag_protection_btn.setText("已开启，点击关闭")
+            self.tone_tag_protection_btn.setStyleSheet(
+                "QPushButton { color: #d7ffd7; border: 1px solid #3a7c46; }"
+            )
+        else:
+            self.tone_tag_protection_btn.setText("已关闭，点击开启")
+            self.tone_tag_protection_btn.setStyleSheet(
+                "QPushButton { color: #cfcfcf; border: 1px solid #555; }"
+            )
+
+    def _toggle_prompt_constraint(self) -> None:
+        if self._loading_values:
+            return
+        self._prompt_constraint_enabled = not self._prompt_constraint_enabled
+        self._refresh_prompt_constraint_button()
+        state_text = "开启" if self._prompt_constraint_enabled else "关闭"
+        self._save(f"提示词约束已{state_text}。")
+
+    def _toggle_tone_tag_protection(self) -> None:
+        if self._loading_values:
+            return
+        self._tone_tag_protection_enabled = not self._tone_tag_protection_enabled
+        self._refresh_tone_tag_protection_button()
+        state_text = "开启" if self._tone_tag_protection_enabled else "关闭"
+        self._save(f"语气标签保护已{state_text}。")
+
+    def _on_model_changed(self) -> None:
+        if self._loading_values:
+            return
+        self._save(f"模型已切换为 {self.model.currentData()}。")
+
+    def _on_default_voice_changed(self) -> None:
+        if self._loading_values:
+            return
+        self._save("默认 voice_id 已更新。")
+
+    def _on_character_voice_changed(self) -> None:
+        if self._loading_values:
+            return
+        self._store_current_character_voice_id()
+        self._save("当前角色 voice_id 已更新。")
+
+    def _on_local_reference_changed(self) -> None:
+        if self._loading_values:
+            return
+        self._store_current_local_reference_audio()
+        self._save("当前角色本地参考音频已更新。")
+
+    def _on_reference_audio_language_changed(self) -> None:
+        if self._loading_values:
+            return
+        self._store_current_reference_audio_language()
+        self._save("当前角色参考音频语言已更新。")
+
     def _load_values(self) -> None:
         state.migrate_package_config_to_data_root()
         state.migrate_api_extra_to_plugin_state(self._plugin_root)
@@ -433,12 +484,18 @@ class CloudTtsSettingsWidget(QWidget):
         self._reference_audio_language_map = state.coerce_voice_language_map(
             values.get("reference_audio_language_map")
         )
-        # 角色语音语言选择暂时从配置页移除，避免旧配置在隐藏状态下继续影响合成。
         self._ensure_versions_from_selected_map()
         self._refresh_default_voice_options(str(values.get("default_voice_id") or ""))
-        self.prompt_constraint.setChecked(
-            self._as_bool(values.get("auto_prompt_constraint"), False)
+        self._prompt_constraint_enabled = self._as_bool(
+            values.get("auto_prompt_constraint"),
+            False,
         )
+        self._tone_tag_protection_enabled = self._as_bool(
+            values.get("protect_translate_tone_tags"),
+            True,
+        )
+        self._refresh_prompt_constraint_button()
+        self._refresh_tone_tag_protection_button()
 
     def _set_combo(self, combo: QComboBox, value: str) -> None:
         idx = combo.findData(value)
@@ -601,12 +658,12 @@ class CloudTtsSettingsWidget(QWidget):
             return
         self.local_ref_path.setText(str(Path(path)))
         self._store_current_local_reference_audio()
-        self.status.setText("已选择本地参考音频；点击保存配置后会随插件配置持久化。")
+        self._save("已选择并保存本地参考音频。")
 
     def _clear_local_reference_audio(self) -> None:
         self.local_ref_path.clear()
         self._store_current_local_reference_audio()
-        self.status.setText("已清除当前角色的本地参考音频。")
+        self._save("已清除当前角色的本地参考音频。")
 
     def _store_current_local_reference_audio(self) -> None:
         self._store_local_reference_audio_for_name(self.character_combo.currentText().strip())
@@ -775,7 +832,8 @@ class CloudTtsSettingsWidget(QWidget):
             "voice_id_versions": dict(self._voice_id_versions),
             "local_reference_audio_map": dict(self._local_reference_audio_map),
             "reference_audio_language_map": dict(self._reference_audio_language_map),
-            "auto_prompt_constraint": self.prompt_constraint.isChecked(),
+            "auto_prompt_constraint": self._prompt_constraint_enabled,
+            "protect_translate_tone_tags": self._tone_tag_protection_enabled,
         }
 
     def _adapter(self) -> CloudTTSAdapter:
@@ -785,17 +843,16 @@ class CloudTtsSettingsWidget(QWidget):
         values["use_runtime_config"] = False
         return CloudTTSAdapter(**values)
 
-    def _save(self) -> None:
+    def _save(self, status_message: str | None = None) -> None:
+        if self._loading_values:
+            return
         self._store_current_character_voice_id()
         values = self._values()
         state.suppress_prompt_constraint()
         # 插件页只保存 MiniMax 行为参数；实际 TTS 引擎由主菜单 API 页选择。
         state.save_plugin_config(self._plugin_root, values)
         # 不刷新主 ConfigManager，避免插件页保存时连带触发模板页生成 Prompt。
-        self.status.setText(
-            "已保存配置。TTS 引擎请在主菜单 API 页选择；"
-            "如果主聊天进程已经启动，请重启聊天进程让 adapter 重新载入。"
-        )
+        self.status.setText(status_message or "插件设置已保存。")
 
     def _import_voice_ids(self) -> None:
         backup_dir = state.project_root() / "temp_export_cloud_tts_voice_ids_20260512"
