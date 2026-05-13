@@ -14,7 +14,7 @@ import yaml
 PROVIDER_SLUG = "minimax-tts"
 PLUGIN_ID = "com.shinsekai.cloud_tts"
 PLUGIN_ENTRY = "plugins.cloud_tts.plugin:CloudTtsPlugin"
-PLUGIN_VERSION = "0.9.4"
+PLUGIN_VERSION = "0.9.5"
 
 LEGACY_PROVIDER_SLUG = "cloud-tts"
 LEGACY_PLUGIN_ID = "com.shinsekai.minimax_tts"
@@ -814,16 +814,13 @@ def combine_prompt_constraint_texts(texts: list[str]) -> str:
         seen.add(key)
     if not bodies:
         return ""
+    if len(bodies) == 1:
+        return wrap_prompt_constraint_text(bodies[0])
     guard = (
         "Cloud TTS 通用强制规则：每条角色对白必须输出 translate 字段。"
         "speech 字段只用于屏幕显示，必须保持自然简体中文且不能包含语气标签；"
         "translate 字段用于语音合成，允许按角色语音目标语言改写并加入 Cloud TTS 支持的语气标签。"
     )
-    if len(bodies) == 1:
-        body = bodies[0]
-        if "每条角色对白必须输出 translate 字段" not in body:
-            body = f"{guard}\n\n{body}"
-        return wrap_prompt_constraint_text(body)
     combined = "以下约束按不同角色语音语言合并；生成对白时，请按对应角色的语音目标处理 translate 字段。\n\n"
     combined += f"{guard}\n\n"
     combined += "\n\n".join(f"【角色语音约束 {i}】\n{body}" for i, body in enumerate(bodies, start=1))
