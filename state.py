@@ -14,7 +14,7 @@ import yaml
 PROVIDER_SLUG = "minimax-tts"
 PLUGIN_ID = "com.shinsekai.cloud_tts"
 PLUGIN_ENTRY = "plugins.cloud_tts.plugin:CloudTtsPlugin"
-PLUGIN_VERSION = "0.7.6"
+PLUGIN_VERSION = "0.7.7"
 
 LEGACY_PROVIDER_SLUG = "cloud-tts"
 LEGACY_PLUGIN_ID = "com.shinsekai.minimax_tts"
@@ -567,7 +567,11 @@ def set_cloud_extra(extra: dict[str, Any]) -> None:
     if not isinstance(all_extra, dict):
         all_extra = {}
     merged = adapter_config_from_values(dict(all_extra.get(PROVIDER_SLUG) or {}))
-    merged.update(adapter_config_from_values(extra))
+    incoming = adapter_config_from_values(extra)
+    for key, value in list(incoming.items()):
+        if not str(value or "").strip() and str(merged.get(key) or "").strip():
+            incoming.pop(key, None)
+    merged.update(incoming)
     all_extra[PROVIDER_SLUG] = merged
     data["tts_extra_configs"] = all_extra
     save_api_config(data)
@@ -995,6 +999,11 @@ def migrate_package_config_to_data_root() -> None:
     merged = dict(src_cfg)
     merged.update({k: v for k, v in dst_cfg.items() if v not in (None, "", {}, [])})
     adapter_extra = adapter_config_from_values(merged)
+    adapter_extra = {
+        key: value
+        for key, value in adapter_extra.items()
+        if str(value or "").strip()
+    }
     if adapter_extra:
         set_cloud_extra(adapter_extra)
     save_plugin_config(dst_root, merged)

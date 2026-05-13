@@ -1,6 +1,4 @@
 {
-    "api_key":  "",
-    "base_api_url":  "https://api.minimaxi.com/v1",
     "model":  "speech-2.8-hd",
     "language_boost":  "auto",
     "auto_clone_from_reference":  false,
