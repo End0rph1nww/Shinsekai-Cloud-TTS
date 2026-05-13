@@ -271,15 +271,15 @@ class MinimaxTtsSettingsWidget(QWidget):
         lay.addWidget(title)
 
         body = QLabel(
-            “<b>1. MiniMax TTS 选择：</b>先在首页 / 主菜单 API 设置页选择 MiniMax TTS，填写 API KEY 和 BASE URL 并保存；”
-            “本页不重复保存这两个连接凭证，只保存模型、合成参数、Paragraph 和 voice_id 绑定。<br/><br/>”
-            “<b>2. 功能开关（重要）：</b>「功能开关」区块的两个选项建议开启——“
-            “<b>Paragraph</b> 按段落整段生成，台词更长更自然；”
-            “<b>提示词约束</b> 则向 LLM 注入语气标签指令，让语音表现更丰富。<br/><br/>”
-            “<b>3. 声纹复刻：</b>请在本页选择角色，确认角色已有参考音频，然后点击「上传所选角色参考音频并缓存 voice_id」。”
-            “生成的 voice_id 保存在 <code>data/plugins/com.shinsekai.minimax_tts/voices/</code>，升级插件不会自动删除。<br/><br/>”
-            “<b>4. 参考音频格式：</b>插件会使用 imageio-ffmpeg 提供的 ffmpeg 自动转换；”
-            “未安装依赖时，只能直接上传符合 MiniMax 要求的 mp3、m4a 或 wav 文件。”
+            "<b>1. MiniMax TTS 选择：</b>先在首页 / 主菜单 API 设置页选择 MiniMax TTS，填写 API KEY 和 BASE URL 并保存；"
+            "本页不重复保存这两个连接凭证，只保存模型、合成参数、Paragraph 和 voice_id 绑定。<br/><br/>"
+            "<b>2. 功能开关（重要）：</b>「功能开关」区块的两个选项建议开启——"
+            "<b>Paragraph</b> 按段落整段生成，台词更长更自然；"
+            "<b>提示词约束</b> 则向 LLM 注入语气标签指令，让语音表现更丰富。<br/><br/>"
+            "<b>3. 声纹复刻：</b>请在本页选择角色，确认角色已有参考音频，然后点击「上传所选角色参考音频并缓存 voice_id」。"
+            "生成的 voice_id 保存在 <code>data/plugins/com.shinsekai.minimax_tts/voices/</code>，升级插件不会自动删除。<br/><br/>"
+            "<b>4. 参考音频格式：</b>插件会使用 imageio-ffmpeg 提供的 ffmpeg 自动转换；"
+            "未安装依赖时，只能直接上传符合 MiniMax 要求的 mp3、m4a 或 wav 文件。"
         )
         body.setWordWrap(True)
         body.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
