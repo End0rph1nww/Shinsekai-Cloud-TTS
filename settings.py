@@ -10,9 +10,10 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
+    QDialog,
     QDoubleSpinBox,
-    QFrame,
     QFileDialog,
+    QFrame,
     QGroupBox,
     QHBoxLayout,
     QLabel,
@@ -22,12 +23,21 @@ from PySide6.QtWidgets import (
     QScrollArea,
     QSizePolicy,
     QSpinBox,
+    QTextEdit,
     QVBoxLayout,
     QWidget,
 )
 
-from plugins.minimax_tts.adapter import MiniMaxTTSAdapter
-from plugins.minimax_tts import state
+from plugins.cloud_tts.adapter import (
+    CloudTTSAdapter,
+    VALID_AUDIO_FORMATS,
+    VALID_BITRATES,
+    VALID_EMOTIONS,
+    VALID_LANGUAGE_BOOSTS,
+    VALID_MODELS,
+    VALID_SAMPLE_RATES,
+)
+from plugins.cloud_tts import state
 
 
 LABEL_WIDTH = 134
@@ -35,7 +45,7 @@ ROW_HEIGHT = 44
 FIELD_HEIGHT = 34
 
 
-class MinimaxTtsSettingsWidget(QWidget):
+class CloudTtsSettingsWidget(QWidget):
     def __init__(self, plugin_root: Path, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._plugin_root = plugin_root
@@ -44,6 +54,11 @@ class MinimaxTtsSettingsWidget(QWidget):
         self._voice_id_versions: dict[str, list[dict[str, Any]]] = {}
         self._build_ui()
         self._load_values()
+        self._reload_characters()
+
+    def showEvent(self, event: Any) -> None:
+        """页签切到插件时自动刷新角色列表."""
+        super().showEvent(event)
         self._reload_characters()
 
     def _build_ui(self) -> None:
@@ -68,25 +83,120 @@ class MinimaxTtsSettingsWidget(QWidget):
         root.addWidget(self._guide_block())
 
         switch_box, switch_lay = self._section("功能开关")
-        self.paragraph_split = self._checkbox("Paragraph：按段落整段生成（不按标点切分）⭐推荐开启")
-        self.paragraph_split.setChecked(True)
-        switch_lay.addWidget(self._check_row(self.paragraph_split))
-
         self.prompt_constraint = self._checkbox("提示词约束：注入 MiniMax 语气标签指令（关闭则不注入）⭐推荐开启")
         self.prompt_constraint.setChecked(False)
         switch_lay.addWidget(self._check_row(self.prompt_constraint))
+
+        tts_split_hint = QLabel("⭐ 推荐前往主菜单 API 设置页，关闭「启用分句合成语音」(tts_split_enabled) 后点击<b>保存配置</b>")
+        tts_split_hint.setWordWrap(True)
+        tts_split_hint.setTextFormat(Qt.TextFormat.RichText)
+        tts_split_hint.setStyleSheet("color: #888; font-size: 12px; padding-left: 146px;")
+        switch_lay.addWidget(tts_split_hint)
         root.addWidget(switch_box)
+
+        voice_box, voice_lay = self._section("角色语音配置")
+        role_line = QWidget()
+        role_line.setFixedHeight(ROW_HEIGHT)
+        role_lay = QHBoxLayout(role_line)
+        role_lay.setContentsMargins(0, 4, 0, 4)
+        role_lay.setSpacing(8)
+        self.character_combo = self._combo()
+        self.refresh_roles = QPushButton("刷新角色")
+        self.refresh_roles.setFixedHeight(FIELD_HEIGHT)
+        self.refresh_roles.clicked.connect(self._reload_characters)
+        role_lay.addWidget(self.character_combo, stretch=1)
+        role_lay.addWidget(self.refresh_roles)
+        voice_lay.addWidget(role_line)
+
+        self.ref_path = QLabel("")
+        self.ref_path.setWordWrap(True)
+        self.ref_path.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        voice_lay.addWidget(self.ref_path)
+
+        self.character_voice_id = self._voice_combo()
+        self.character_voice_id.lineEdit().setPlaceholderText("该角色专用 voice_id")
+        self.character_voice_id.currentIndexChanged.connect(
+            lambda _index: self._store_current_character_voice_id()
+        )
+        self.character_voice_id.lineEdit().editingFinished.connect(
+            self._store_current_character_voice_id
+        )
+        voice_lay.addWidget(self._row("角色 voice_id", self.character_voice_id))
+
+        self.upload_btn = QPushButton("上传参考音频并克隆 voice_id")
+        self.upload_btn.setFixedHeight(FIELD_HEIGHT)
+        self.upload_btn.clicked.connect(self._upload_selected_character)
+
+        self.import_voice_btn = QPushButton("导入 voice_id JSON")
+        self.import_voice_btn.setFixedHeight(FIELD_HEIGHT)
+        self.import_voice_btn.clicked.connect(self._import_voice_ids)
+
+        voice_actions = QWidget()
+        voice_actions.setFixedHeight(ROW_HEIGHT)
+        voice_actions_lay = QHBoxLayout(voice_actions)
+        voice_actions_lay.setContentsMargins(0, 4, 0, 4)
+        voice_actions_lay.setSpacing(8)
+        voice_actions_lay.addWidget(self.upload_btn, stretch=1)
+        voice_actions_lay.addWidget(self.import_voice_btn)
+        voice_lay.addWidget(voice_actions)
+
+        self.need_noise_reduction = self._checkbox("克隆时启用降噪")
+        voice_lay.addWidget(self._check_row(self.need_noise_reduction))
+
+        self.need_volume_normalization = self._checkbox("克隆时音量归一")
+        voice_lay.addWidget(self._check_row(self.need_volume_normalization))
+
+        self.voice_cache_path = self._line_edit("cache/audio/cloud_tts_voice_cache.json")
+        voice_lay.addWidget(self._row("自动克隆缓存", self.voice_cache_path))
+
+        root.addWidget(voice_box)
+
+        template_box, template_lay = self._section("提示词模板")
+        self.template_character_combo = self._combo()
+        self.template_character_combo.setMinimumContentsLength(20)
+        self.template_character_combo.currentIndexChanged.connect(self._on_template_character_changed)
+        template_lay.addWidget(self._row("角色", self.template_character_combo))
+
+        self.constraint_version_combo = self._combo()
+        self.constraint_version_combo.setMinimumContentsLength(20)
+        self.constraint_version_combo.currentIndexChanged.connect(self._on_constraint_version_changed)
+        template_lay.addWidget(self._row("约束版本", self.constraint_version_combo))
+
+        self.version_name_edit = self._line_edit("")
+        self.version_name_edit.setPlaceholderText("版本名称，如「默认模板」「优化版」")
+        template_lay.addWidget(self._row("版本名称", self.version_name_edit))
+
+        self.constraint_text_edit = QTextEdit()
+        self.constraint_text_edit.setMinimumHeight(200)
+        template_lay.addWidget(self.constraint_text_edit)
+
+        template_actions = QWidget()
+        template_actions.setFixedHeight(ROW_HEIGHT)
+        template_actions_lay = QHBoxLayout(template_actions)
+        template_actions_lay.setContentsMargins(0, 4, 0, 4)
+        template_actions_lay.setSpacing(8)
+        self.new_version_btn = QPushButton("新建版本")
+        self.new_version_btn.setFixedHeight(FIELD_HEIGHT)
+        self.new_version_btn.clicked.connect(self._new_constraint_version)
+        self.save_version_btn = QPushButton("保存当前版本")
+        self.save_version_btn.setFixedHeight(FIELD_HEIGHT)
+        self.save_version_btn.clicked.connect(self._save_constraint_version)
+        self.delete_version_btn = QPushButton("删除当前版本")
+        self.delete_version_btn.setFixedHeight(FIELD_HEIGHT)
+        self.delete_version_btn.clicked.connect(self._delete_constraint_version)
+        self.reset_default_btn = QPushButton("重置默认模板")
+        self.reset_default_btn.setFixedHeight(FIELD_HEIGHT)
+        self.reset_default_btn.clicked.connect(self._reset_default_template)
+        template_actions_lay.addWidget(self.new_version_btn)
+        template_actions_lay.addWidget(self.save_version_btn)
+        template_actions_lay.addWidget(self.delete_version_btn)
+        template_actions_lay.addWidget(self.reset_default_btn)
+        template_lay.addWidget(template_actions)
+        root.addWidget(template_box)
 
         api_box, api_lay = self._section("模型与兜底声线")
         self.model = self._combo()
-        for item in (
-            "speech-2.8-hd",
-            "speech-2.8-turbo",
-            "speech-2.6-hd",
-            "speech-2.6-turbo",
-            "speech-02-hd",
-            "speech-02-turbo",
-        ):
+        for item in VALID_MODELS:
             self.model.addItem(item, item)
         api_lay.addWidget(self._row("模型", self.model))
 
@@ -97,25 +207,23 @@ class MinimaxTtsSettingsWidget(QWidget):
 
         synth_box, synth_lay = self._section("合成参数")
         self.language_boost = self._combo()
-        for item in ("auto", "Japanese", "Chinese", "Chinese,Yue", "English"):
+        for item in VALID_LANGUAGE_BOOSTS:
             self.language_boost.addItem(item, item)
         synth_lay.addWidget(self._row("语言增强", self.language_boost))
 
         self.audio_format = self._combo()
-        for item in ("wav", "mp3", "flac"):
+        for item in VALID_AUDIO_FORMATS:
             self.audio_format.addItem(item, item)
         synth_lay.addWidget(self._row("音频格式", self.audio_format))
 
-        self.sample_rate = self._spin()
-        self.sample_rate.setRange(8000, 48000)
-        self.sample_rate.setSingleStep(1000)
-        self.sample_rate.setValue(32000)
+        self.sample_rate = self._combo()
+        for value in VALID_SAMPLE_RATES:
+            self.sample_rate.addItem(str(value), str(value))
         synth_lay.addWidget(self._row("采样率", self.sample_rate))
 
-        self.bitrate = self._spin()
-        self.bitrate.setRange(32000, 320000)
-        self.bitrate.setSingleStep(16000)
-        self.bitrate.setValue(128000)
+        self.bitrate = self._combo()
+        for value in VALID_BITRATES:
+            self.bitrate.addItem(str(value), str(value))
         synth_lay.addWidget(self._row("比特率", self.bitrate))
 
         self.channel = self._combo()
@@ -130,7 +238,7 @@ class MinimaxTtsSettingsWidget(QWidget):
         synth_lay.addWidget(self._row("语速", self.speed))
 
         self.vol = self._double_spin()
-        self.vol.setRange(0.1, 10.0)
+        self.vol.setRange(0.0, 10.0)
         self.vol.setSingleStep(0.05)
         self.vol.setValue(1.0)
         synth_lay.addWidget(self._row("音量", self.vol))
@@ -140,16 +248,7 @@ class MinimaxTtsSettingsWidget(QWidget):
         synth_lay.addWidget(self._row("音高", self.pitch))
 
         self.emotion = self._combo()
-        for item in (
-            "",
-            "happy",
-            "sad",
-            "angry",
-            "fearful",
-            "disgusted",
-            "surprised",
-            "neutral",
-        ):
+        for item in ("", *VALID_EMOTIONS):
             self.emotion.addItem(item or "不固定", item)
         synth_lay.addWidget(self._row("默认情绪", self.emotion))
 
@@ -163,62 +262,6 @@ class MinimaxTtsSettingsWidget(QWidget):
         synth_lay.addWidget(self._row("请求超时", self.request_timeout))
 
         root.addWidget(synth_box)
-
-        clone_box, clone_lay = self._section("角色参考音频上传")
-        role_line = QWidget()
-        role_line.setFixedHeight(ROW_HEIGHT)
-        role_lay = QHBoxLayout(role_line)
-        role_lay.setContentsMargins(0, 4, 0, 4)
-        role_lay.setSpacing(8)
-        self.character_combo = self._combo()
-        self.refresh_roles = QPushButton("刷新角色")
-        self.refresh_roles.setFixedHeight(FIELD_HEIGHT)
-        self.refresh_roles.clicked.connect(self._reload_characters)
-        role_lay.addWidget(self.character_combo, stretch=1)
-        role_lay.addWidget(self.refresh_roles)
-        clone_lay.addWidget(role_line)
-
-        self.ref_path = QLabel("")
-        self.ref_path.setWordWrap(True)
-        self.ref_path.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-        clone_lay.addWidget(self.ref_path)
-
-        self.character_voice_id = self._voice_combo()
-        self.character_voice_id.lineEdit().setPlaceholderText("该角色专用 voice_id")
-        self.character_voice_id.currentIndexChanged.connect(
-            lambda _index: self._store_current_character_voice_id()
-        )
-        self.character_voice_id.lineEdit().editingFinished.connect(
-            self._store_current_character_voice_id
-        )
-        clone_lay.addWidget(self._row("角色 voice_id 版本", self.character_voice_id))
-
-        self.upload_btn = QPushButton("上传所选角色参考音频并缓存 voice_id")
-        self.upload_btn.setFixedHeight(FIELD_HEIGHT)
-        self.upload_btn.clicked.connect(self._upload_selected_character)
-
-        self.import_voice_btn = QPushButton("导入 voice_id JSON")
-        self.import_voice_btn.setFixedHeight(FIELD_HEIGHT)
-        self.import_voice_btn.clicked.connect(self._import_voice_ids)
-
-        self.need_noise_reduction = self._checkbox("克隆时启用降噪")
-        clone_lay.addWidget(self._check_row(self.need_noise_reduction))
-
-        self.need_volume_normalization = self._checkbox("克隆时音量归一")
-        clone_lay.addWidget(self._check_row(self.need_volume_normalization))
-
-        self.voice_cache_path = self._line_edit("cache/audio/minimax_voice_cache.json")
-        clone_lay.addWidget(self._row("自动克隆缓存", self.voice_cache_path))
-
-        voice_actions = QWidget()
-        voice_actions.setFixedHeight(ROW_HEIGHT)
-        voice_actions_lay = QHBoxLayout(voice_actions)
-        voice_actions_lay.setContentsMargins(0, 4, 0, 4)
-        voice_actions_lay.setSpacing(8)
-        voice_actions_lay.addWidget(self.upload_btn, stretch=1)
-        voice_actions_lay.addWidget(self.import_voice_btn)
-        clone_lay.addWidget(voice_actions)
-        root.addWidget(clone_box)
         root.addStretch(1)
 
         outer.addWidget(scroll, stretch=1)
@@ -266,20 +309,22 @@ class MinimaxTtsSettingsWidget(QWidget):
         lay.setContentsMargins(0, 0, 0, 2)
         lay.setSpacing(6)
 
-        title = QLabel("MiniMax TTS 使用提示")
+        title = QLabel("Cloud TTS 使用提示")
         title.setStyleSheet("color: #b88cff; font-weight: 600;")
         lay.addWidget(title)
 
         body = QLabel(
-            "<b>1. MiniMax TTS 选择：</b>先在首页 / 主菜单 API 设置页选择 MiniMax TTS，填写 API KEY 和 BASE URL 并保存；"
-            "本页不重复保存这两个连接凭证，只保存模型、合成参数、Paragraph 和 voice_id 绑定。<br/><br/>"
-            "<b>2. 功能开关（重要）：</b>「功能开关」区块的两个选项建议开启——"
-            "<b>Paragraph</b> 按段落整段生成，台词更长更自然；"
-            "<b>提示词约束</b> 则向 LLM 注入语气标签指令，让语音表现更丰富。<br/><br/>"
-            "<b>3. 声纹复刻：</b>请在本页选择角色，确认角色已有参考音频，然后点击「上传所选角色参考音频并缓存 voice_id」。"
-            "生成的 voice_id 保存在 <code>data/plugins/com.shinsekai.minimax_tts/voices/</code>，升级插件不会自动删除。<br/><br/>"
-            "<b>4. 参考音频格式：</b>插件会使用 imageio-ffmpeg 提供的 ffmpeg 自动转换；"
-            "未安装依赖时，只能直接上传符合 MiniMax 要求的 mp3、m4a 或 wav 文件。"
+            "<b>1. 前置条件：</b>先在首页 / 主菜单 API 设置页选择 MiniMax TTS，填写 API KEY 和 BASE URL 并保存。"
+            "本页不重复保存这两个连接凭证。<br/><br/>"
+            "<b>2. 功能开关：</b>建议开启<b>提示词约束</b>，向 LLM 注入语气标签指令让语音表现更丰富。"
+            "TTS 分段功能已由主程序接管，请在 API 设置页配置「TTS 分句发送」。<br/><br/>"
+            "<b>3. 角色 voice_id：</b>选择角色后在下拉框中选择或粘贴 voice_id，支持多版本历史管理。"
+            "也可上传参考音频自动克隆 voice_id，结果缓存在 <code>data/plugins/com.shinsekai.cloud_tts/voices/</code>。<br/><br/>"
+            "<b>4. 提示词模板：</b>选择角色后可管理约束版本（v1 / v2 …），每个版本可自定义名称和内容。"
+            "「默认模板」角色是母版——修改保存后，所有标记为跟随母版的角色版本会自动同步更新。"
+            "新建版本以默认模板为基底。手动保存某个角色版本后，该版本脱离母版不再自动同步。<br/><br/>"
+            "<b>5. 合成参数：</b>模型建议选 speech-2.8-hd；语速/音量/音高/情绪可按需微调。"
+            "自动克隆开关：未找到 voice_id 时从角色参考音频自动复刻。"
         )
         body.setWordWrap(True)
         body.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
@@ -359,6 +404,40 @@ class MinimaxTtsSettingsWidget(QWidget):
         except (TypeError, ValueError):
             return default
 
+    def _valid_sample_rate(self, value: Any) -> int:
+        try:
+            sample_rate = int(value)
+        except (TypeError, ValueError):
+            return 32000
+        if sample_rate in VALID_SAMPLE_RATES:
+            return sample_rate
+        return 32000
+
+    def _valid_bitrate(self, value: Any) -> int:
+        try:
+            bitrate = int(value)
+        except (TypeError, ValueError):
+            return 128000
+        if bitrate in VALID_BITRATES:
+            return bitrate
+        return 128000
+
+    def _valid_choice(self, value: Any, valid: tuple[str, ...], default: str) -> str:
+        item = str(value or "").strip()
+        if item in valid:
+            return item
+        lowered = item.lower()
+        for candidate in valid:
+            if candidate.lower() == lowered:
+                return candidate
+        return default
+
+    def _valid_emotion(self, value: Any) -> str:
+        item = str(value or "").strip()
+        if item == "neutral":
+            item = "calm"
+        return self._valid_choice(item, VALID_EMOTIONS, "") if item else ""
+
     def _as_float(self, value: Any, default: float) -> float:
         try:
             return float(value)
@@ -382,7 +461,7 @@ class MinimaxTtsSettingsWidget(QWidget):
         state.migrate_package_config_to_data_root()
         state.migrate_api_extra_to_plugin_state(self._plugin_root)
         cfg = state.load_plugin_config(self._plugin_root)
-        extra = state.get_minimax_extra()
+        extra = state.get_cloud_extra()
         values = dict(
             {
                 k: v
@@ -392,24 +471,33 @@ class MinimaxTtsSettingsWidget(QWidget):
         )
         # 官方 adapter 配置从 api.yaml 读取；旧版插件状态只作为兼容兜底。
         values.update(extra)
-        self._set_combo(self.model, str(values.get("model") or "speech-2.8-hd"))
+        self._set_combo(
+            self.model,
+            self._valid_choice(values.get("model"), VALID_MODELS, "speech-2.8-hd"),
+        )
         self._voice_id_map = self._coerce_voice_id_map(values.get("voice_id_map"))
         self._voice_id_versions = self._coerce_voice_id_versions(values.get("voice_id_versions"))
         self._ensure_versions_from_selected_map()
         self._refresh_default_voice_options(str(values.get("default_voice_id") or ""))
-        self._set_combo(self.language_boost, str(values.get("language_boost") or "auto"))
-        self._set_combo(self.audio_format, str(values.get("audio_format") or "wav"))
-        self.sample_rate.setValue(self._as_int(values.get("sample_rate"), 32000))
-        self.bitrate.setValue(self._as_int(values.get("bitrate"), 128000))
+        self._set_combo(
+            self.language_boost,
+            self._valid_choice(values.get("language_boost"), VALID_LANGUAGE_BOOSTS, "auto"),
+        )
+        self._set_combo(
+            self.audio_format,
+            self._valid_choice(values.get("audio_format"), VALID_AUDIO_FORMATS, "wav"),
+        )
+        self._set_combo(
+            self.sample_rate,
+            str(self._valid_sample_rate(values.get("sample_rate"))),
+        )
+        self._set_combo(self.bitrate, str(self._valid_bitrate(values.get("bitrate"))))
         self._set_combo(self.channel, str(values.get("channel") or "1"))
-        self._set_combo(self.emotion, str(values.get("emotion") or ""))
+        self._set_combo(self.emotion, self._valid_emotion(values.get("emotion")))
         self.speed.setValue(self._as_float(values.get("speed"), 1.0))
         self.vol.setValue(self._as_float(values.get("vol"), 1.0))
         self.pitch.setValue(self._as_int(values.get("pitch"), 0))
         self.auto_clone.setChecked(bool(values.get("auto_clone_from_reference", False)))
-        self.paragraph_split.setChecked(
-            self._as_bool(values.get("paragraph_split_enabled"), True)
-        )
         self.prompt_constraint.setChecked(
             self._as_bool(values.get("auto_prompt_constraint"), False)
         )
@@ -419,7 +507,7 @@ class MinimaxTtsSettingsWidget(QWidget):
             bool(values.get("need_volume_normalization", False))
         )
         self.voice_cache_path.setText(
-            str(values.get("voice_cache_path") or "cache/audio/minimax_voice_cache.json")
+            str(values.get("voice_cache_path") or "cache/audio/cloud_tts_voice_cache.json")
         )
 
     def _set_combo(self, combo: QComboBox, value: str) -> None:
@@ -509,6 +597,7 @@ class MinimaxTtsSettingsWidget(QWidget):
                 self.character_combo.setCurrentIndex(idx)
         self.character_combo.blockSignals(False)
         self._sync_reference_label()
+        self._refresh_template_characters()
 
     def _selected_character(self) -> dict[str, Any] | None:
         name = self.character_combo.currentText()
@@ -632,8 +721,8 @@ class MinimaxTtsSettingsWidget(QWidget):
             "voice_id_versions": dict(self._voice_id_versions),
             "language_boost": str(self.language_boost.currentData() or "auto"),
             "audio_format": str(self.audio_format.currentData() or "wav"),
-            "sample_rate": int(self.sample_rate.value()),
-            "bitrate": int(self.bitrate.value()),
+            "sample_rate": int(self.sample_rate.currentData() or 32000),
+            "bitrate": int(self.bitrate.currentData() or 128000),
             "channel": int(self.channel.currentData() or 1),
             "speed": float(self.speed.value()),
             "vol": float(self.vol.value()),
@@ -641,24 +730,24 @@ class MinimaxTtsSettingsWidget(QWidget):
             "emotion": str(self.emotion.currentData() or ""),
             "auto_clone_from_reference": self.auto_clone.isChecked(),
             "auto_prompt_constraint": self.prompt_constraint.isChecked(),
-            "paragraph_split_enabled": self.paragraph_split.isChecked(),
             "request_timeout": int(self.request_timeout.value()),
             "need_noise_reduction": self.need_noise_reduction.isChecked(),
             "need_volume_normalization": self.need_volume_normalization.isChecked(),
             "voice_cache_path": (
                 self.voice_cache_path.text().strip()
-                or "cache/audio/minimax_voice_cache.json"
+                or "cache/audio/cloud_tts_voice_cache.json"
             ),
         }
 
-    def _adapter(self) -> MiniMaxTTSAdapter:
+    def _adapter(self) -> CloudTTSAdapter:
         values = self._values()
-        values.update(state.get_minimax_extra())
+        values.update(state.get_cloud_extra())
         # 上传按钮使用当前表单即时值，不等待下一次 adapter 运行时重新读配置。
         values["use_runtime_config"] = False
-        return MiniMaxTTSAdapter(**values)
+        return CloudTTSAdapter(**values)
 
     def _save(self) -> None:
+        self._store_current_character_voice_id()
         values = self._values()
         state.suppress_prompt_constraint()
         # 插件页只保存 MiniMax 行为参数；实际 TTS 引擎由主菜单 API 页选择。
@@ -670,7 +759,7 @@ class MinimaxTtsSettingsWidget(QWidget):
         )
 
     def _import_voice_ids(self) -> None:
-        backup_dir = state.project_root() / "temp_export_minimax_voice_ids_20260512"
+        backup_dir = state.project_root() / "temp_export_cloud_tts_voice_ids_20260512"
         start_dir = backup_dir if backup_dir.is_dir() else state.project_root()
         paths, _selected_filter = QFileDialog.getOpenFileNames(
             self,
@@ -718,7 +807,7 @@ class MinimaxTtsSettingsWidget(QWidget):
         message = "，".join(parts) or "没有找到可导入的 voice_id"
         self.status.setText(message)
         if errors:
-            QMessageBox.warning(self, "MiniMax TTS", "\n".join(errors[:5]))
+            QMessageBox.warning(self, "Cloud TTS", "\n".join(errors[:5]))
 
     def _import_voice_payload(self, raw: Any, source_path: Path) -> tuple[int, str]:
         if isinstance(raw, list):
@@ -845,17 +934,207 @@ class MinimaxTtsSettingsWidget(QWidget):
             out.append(rec)
         return out
 
+    # ------------------------------------------------------------------
+    # 提示词模板 - 角色约束版本管理
+    # ------------------------------------------------------------------
+
+    def _refresh_template_characters(self) -> None:
+        """刷新提示词模板区块的角色下拉列表，首项为「默认模板」."""
+        current = self.template_character_combo.currentText()
+        self.template_character_combo.blockSignals(True)
+        self.template_character_combo.clear()
+        # 虚拟角色：默认模板，查看/编辑硬编码默认约束
+        self.template_character_combo.addItem("默认模板", "默认模板")
+        for char in self._characters:
+            name = str(char.get("name") or "").strip()
+            if name and name != "默认模板":
+                self.template_character_combo.addItem(name, name)
+        if current:
+            idx = self.template_character_combo.findText(current)
+            if idx >= 0:
+                self.template_character_combo.setCurrentIndex(idx)
+        self.template_character_combo.blockSignals(False)
+        self._refresh_constraint_version_combo()
+
+
+    def _on_template_character_changed(self) -> None:
+        """切换模板角色时刷新约束版本下拉框和按钮状态."""
+        self._refresh_constraint_version_combo()
+        self._update_default_template_buttons()
+
+    def _refresh_constraint_version_combo(self) -> None:
+        """刷新约束版本下拉框，格式: 'v1 / 用户取名'"""
+        name = self.template_character_combo.currentText().strip()
+        self.constraint_version_combo.blockSignals(True)
+        self.constraint_version_combo.clear()
+        if not name:
+            self.constraint_version_combo.blockSignals(False)
+            self.constraint_text_edit.clear()
+            self.version_name_edit.clear()
+            return
+
+        store = state.load_character_constraints(name)
+        selected_vid = store.get("selected_version")
+
+        for vid, vdata in sorted(
+            store["versions"].items(),
+            key=lambda x: x[1].get("created_at", 0),
+        ):
+            version_name = str(vdata.get("name", "")).strip()
+            label = f"{vid} / {version_name}" if version_name else vid
+            self.constraint_version_combo.addItem(label, vid)
+
+        if selected_vid:
+            idx = self.constraint_version_combo.findData(selected_vid)
+            if idx >= 0:
+                self.constraint_version_combo.setCurrentIndex(idx)
+        self.constraint_version_combo.blockSignals(False)
+
+        # 传入已读取的 store，避免 _on_constraint_version_changed 重复读盘
+        self._on_constraint_version_changed(store=store)
+        self._update_default_template_buttons()
+
+    def _update_default_template_buttons(self) -> None:
+        """默认模板角色仅允许保存和重置，不允许新建/删除版本."""
+        is_default = self.template_character_combo.currentText().strip() == "默认模板"
+        self.new_version_btn.setEnabled(not is_default)
+        self.delete_version_btn.setEnabled(not is_default)
+        self.reset_default_btn.setEnabled(is_default)
+
+    def _on_constraint_version_changed(self, *, store: dict | None = None) -> None:
+        """切换版本时加载名称和内容，仅在版本确实变化时写盘."""
+        name = self.template_character_combo.currentText().strip()
+        vid = self.constraint_version_combo.currentData()
+        if not name or not vid:
+            return
+
+        if store is None:
+            store = state.load_character_constraints(name)
+        version = store.get("versions", {}).get(vid)
+        if not version:
+            return
+
+        self.version_name_edit.blockSignals(True)
+        self.version_name_edit.setText(str(version.get("name", "") or ""))
+        self.version_name_edit.blockSignals(False)
+
+        self.constraint_text_edit.blockSignals(True)
+        self.constraint_text_edit.setPlainText(version.get("constraint_text", ""))
+        self.constraint_text_edit.blockSignals(False)
+
+        # 仅在版本确实变化时才写盘，避免每次浏览都触发磁盘写入
+        if store.get("selected_version") != vid:
+            state.select_constraint_version(name, vid)
+
+    def _new_constraint_version(self) -> None:
+        """以默认模板当前内容为基底创建新版本."""
+        name = self.template_character_combo.currentText().strip()
+        if not name or name == "默认模板":
+            return
+
+        # 从默认模板角色文件读取当前内容，确保随母版同步更新
+        default_text = state.get_default_template_text()
+
+        version_name = self.version_name_edit.text().strip()
+        if not version_name:
+            version_name = "新版本"
+        # 新建版本默认跟随母版同步（source="default"）
+        state.upsert_constraint_version(name, None, default_text, name=version_name, source="default")
+        self._refresh_constraint_version_combo()
+        self.status.setText(f"已为 {name} 创建新约束版本。")
+
+    def _save_constraint_version(self) -> None:
+        """保存当前编辑内容和名称到选中的版本。默认模板保存时全局同步."""
+        name = self.template_character_combo.currentText().strip()
+        vid = self.constraint_version_combo.currentData()
+        if not name or not vid:
+            QMessageBox.warning(self, "Cloud TTS", "请先选择角色和版本。")
+            return
+
+        text = self.constraint_text_edit.toPlainText().strip()
+        if not text:
+            QMessageBox.warning(self, "Cloud TTS", "约束内容不能为空。")
+            return
+
+        version_name = self.version_name_edit.text().strip()
+        # 默认模板：保存后全局同步所有 source="default" 的角色版本
+        if name == "默认模板":
+            state.upsert_constraint_version(name, vid, text, name=version_name, source="default")
+            count = state.propagate_default_template(text)
+            self._refresh_constraint_version_combo()
+            self.status.setText(
+                f"已保存默认模板。已同步 {count} 个使用默认模板的角色。"
+            )
+        else:
+            # 手动保存意味着用户自定义，标记为 manual 停止跟随母版同步
+            state.upsert_constraint_version(name, vid, text, name=version_name, source="manual")
+            self._refresh_constraint_version_combo()
+            self.status.setText(f"已保存 {name} 的约束版本 {vid}。")
+
+    def _delete_constraint_version(self) -> None:
+        """删除当前选中的约束版本（至少保留一个）."""
+        name = self.template_character_combo.currentText().strip()
+        vid = self.constraint_version_combo.currentData()
+        if not name or not vid:
+            QMessageBox.warning(self, "Cloud TTS", "请先选择角色和版本。")
+            return
+
+        versions = state.list_constraint_versions(name)
+        if len(versions) <= 1:
+            QMessageBox.warning(self, "Cloud TTS", "至少需要保留一个约束版本。")
+            return
+
+        reply = QMessageBox.question(
+            self, "Cloud TTS",
+            f"确认删除 {name} 的约束版本「{vid}」？\n删除后无法恢复。",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+
+        if state.remove_constraint_version(name, vid):
+            self._refresh_constraint_version_combo()
+            self.status.setText(f"已删除约束版本「{vid}」。")
+        else:
+            QMessageBox.warning(self, "Cloud TTS", "删除失败。")
+
+    def _reset_default_template(self) -> None:
+        """将默认模板恢复为硬编码原始内容，并全局同步."""
+        name = self.template_character_combo.currentText().strip()
+        if name != "默认模板":
+            return
+
+        from plugins.cloud_tts.state import _get_hardcoded_constraints
+        default_text = _get_hardcoded_constraints().get("default", "")
+
+        reply = QMessageBox.question(
+            self, "Cloud TTS",
+            "确认将默认模板重置为原始硬编码内容？\n此操作会同步更新所有跟随母版的角色版本。",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+
+        state.upsert_constraint_version(name, "v1", default_text, name="默认模板", source="default")
+        count = state.propagate_default_template(default_text)
+        self._refresh_constraint_version_combo()
+        self.status.setText(
+            f"已重置默认模板为原始内容。已同步 {count} 个使用默认模板的角色。"
+        )
+
     def _upload_selected_character(self) -> None:
         char = self._selected_character()
         if not char:
-            QMessageBox.warning(self, "MiniMax TTS", "没有选中的角色。")
+            QMessageBox.warning(self, "Cloud TTS", "没有选中的角色。")
             return
         path = state.resolve_reference_audio(char)
         if not path or not path.is_file():
-            QMessageBox.warning(self, "MiniMax TTS", "角色参考音频不存在。")
+            QMessageBox.warning(self, "Cloud TTS", "角色参考音频不存在。")
             return
-        if not str(state.get_minimax_extra().get("api_key") or "").strip():
-            QMessageBox.warning(self, "MiniMax TTS", "请先在 API 设定页填写 MiniMax API KEY。")
+        if not str(state.get_cloud_extra().get("api_key") or "").strip():
+            QMessageBox.warning(self, "Cloud TTS", "请先在 API 设定页填写 MiniMax API KEY。")
             return
         self.upload_btn.setEnabled(False)
         self.status.setText("正在转换并上传参考音频，随后创建 voice_id...")
@@ -867,7 +1146,7 @@ class MinimaxTtsSettingsWidget(QWidget):
             )
         except Exception as exc:
             self.status.setText(f"上传失败：{exc}")
-            QMessageBox.warning(self, "MiniMax TTS", str(exc))
+            QMessageBox.warning(self, "Cloud TTS", str(exc))
         else:
             name = str(char.get("name") or "").strip()
             if name:

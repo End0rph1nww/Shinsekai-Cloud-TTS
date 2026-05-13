@@ -1,2 +1,2 @@
-"""MiniMax TTS plugin package."""
+"""Cloud TTS plugin package."""
 

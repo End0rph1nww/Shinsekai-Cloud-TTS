@@ -1,4 +1,4 @@
-# MiniMax TTS plugin dependency.
+# Cloud TTS plugin dependency.
 # imageio-ffmpeg provides a bundled ffmpeg binary used to convert reference audio
 # into wav before voice clone upload.
 imageio-ffmpeg>=0.6.0

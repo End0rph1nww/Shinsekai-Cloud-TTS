@@ -6,20 +6,20 @@ from functools import wraps
 from pathlib import Path
 from typing import Any, Callable
 
-from plugins.minimax_tts import state
+from plugins.cloud_tts import state
 
 
-_API_SAVE_ORIGINAL_ATTR = "_minimax_tts_original_api_save"
-_API_SAVE_HOOK_ATTR = "_minimax_tts_api_save_hook"
-_LEGACY_TEMPLATE_ORIGINAL_ATTR = "_minimax_tts_original_generate_chat_template"
-_TEMPLATE_RESTORE_ORIGINAL_ATTR = "_minimax_tts_original_restore_last_launch_session"
-_TEMPLATE_RESTORE_HOOK_ATTR = "_minimax_tts_restore_session_hook"
-_TEMPLATE_GENERATE_ORIGINAL_ATTR = "_minimax_tts_original_on_generate"
-_TEMPLATE_GENERATE_HOOK_ATTR = "_minimax_tts_on_generate_hook"
+_API_SAVE_ORIGINAL_ATTR = "_cloud_tts_original_api_save"
+_API_SAVE_HOOK_ATTR = "_cloud_tts_api_save_hook"
+_LEGACY_TEMPLATE_ORIGINAL_ATTR = "_cloud_tts_original_generate_chat_template"
+_TEMPLATE_RESTORE_ORIGINAL_ATTR = "_cloud_tts_original_restore_last_launch_session"
+_TEMPLATE_RESTORE_HOOK_ATTR = "_cloud_tts_restore_session_hook"
+_TEMPLATE_GENERATE_ORIGINAL_ATTR = "_cloud_tts_original_on_generate"
+_TEMPLATE_GENERATE_HOOK_ATTR = "_cloud_tts_on_generate_hook"
 
 
 def _provider_wants_constraint(provider: str | None) -> bool:
-    if str(provider or "").strip().lower() != state.PROVIDER_SLUG:
+    if not state.is_cloud_tts_provider(provider):
         return False
     if not state.plugin_manifest_enabled():
         return False
@@ -139,6 +139,11 @@ def _sync_template_session_file(template_tab: Any, provider: str | None) -> None
         return
 
 
+def _get_character_constraint_text(character_name: str) -> str | None:
+    """Get currently selected constraint text for a character from per-character versioned system."""
+    return state.get_character_constraint_text(character_name)
+
+
 def _sync_template_text(
     text: str,
     provider: str | None,
@@ -149,10 +154,24 @@ def _sync_template_text(
         return state.remove_prompt_constraint_text(old)
 
     wants_constraint = _provider_wants_constraint(provider)
-    if wants_constraint and not _looks_like_generated_template(old, selected_characters):
+    if not wants_constraint:
+        return state.remove_prompt_constraint_text(old)
+    if not _looks_like_generated_template(old, selected_characters):
         return old
 
-    return state.sync_prompt_constraint_text(old, active=wants_constraint)
+    # Collect constraint texts from all selected characters
+    constraint_texts: set[str] = set()
+    for name in selected_characters:
+        ct = _get_character_constraint_text(name)
+        if ct:
+            constraint_texts.add(ct)
+
+    # If all characters share the same constraint, inject it
+    if len(constraint_texts) == 1:
+        constraint_text = next(iter(constraint_texts))
+        return state.add_prompt_constraint_text(old, constraint_text)
+
+    return state.remove_prompt_constraint_text(old)
 
 
 def _sync_template_tab(template_tab: Any, provider: str | None) -> None:

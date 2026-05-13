@@ -1,11 +1,10 @@
-﻿{
+{
     "api_key":  "",
     "base_api_url":  "https://api.minimaxi.com/v1",
     "model":  "speech-2.8-hd",
     "language_boost":  "auto",
     "auto_clone_from_reference":  false,
-    "paragraph_split_enabled":  true,
-    "voice_cache_path":  "cache/audio/minimax_voice_cache.json",
+    "voice_cache_path":  "cache/audio/cloud_tts_voice_cache.json",
     "clone_text":  "",
     "need_noise_reduction":  false,
     "need_volume_normalization":  true,

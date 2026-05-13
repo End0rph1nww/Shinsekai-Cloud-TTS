@@ -3,15 +3,15 @@ from __future__ import annotations
 from functools import wraps
 from typing import Any, Callable
 
-from plugins.minimax_tts import state
+from plugins.cloud_tts import state
 
 
-_PATCHED_ATTR = "_minimax_tts_host_hook"
-_ORIGINAL_ATTR = "_minimax_tts_original"
+_PATCHED_ATTR = "_cloud_tts_host_hook"
+_ORIGINAL_ATTR = "_cloud_tts_original"
 
 
 def _clear_main_tts_provider_if_needed() -> None:
-    changed = state.clear_minimax_tts_provider_if_selected()
+    changed = state.clear_cloud_tts_provider_if_selected()
     if not changed:
         return
     try:
@@ -38,8 +38,8 @@ def _wrap_manifest_setter(func: Callable[..., bool]) -> Callable[..., bool]:
     @wraps(func)
     def wrapped(entry: str, enabled: bool, *args: Any, **kwargs: Any) -> bool:
         ok = func(entry, enabled, *args, **kwargs)
-        if ok and entry.strip() == state.PLUGIN_ENTRY and not bool(enabled):
-            # 禁用插件后下一次启动不会再注册 minimax-tts；
+        if ok and state.is_cloud_tts_entry(entry) and not bool(enabled):
+            # 禁用插件后下一次启动不会再注册 cloud-tts；
             # 如果主菜单仍选着它，就清到 none，避免留下失效入口。
             _clear_main_tts_provider_if_needed()
             _remove_runtime_adapter()

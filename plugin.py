@@ -7,11 +7,11 @@ from sdk.plugin_host_context import PluginHostContext
 from sdk.register import PluginCapabilityRegistry
 from sdk.types import SettingsUIContribution
 
-from plugins.minimax_tts.adapter import MiniMaxTTSAdapter
-from plugins.minimax_tts import host_hook, paragraph, prompt_hook, state
+from plugins.cloud_tts.adapter import CloudTTSAdapter
+from plugins.cloud_tts import host_hook, prompt_hook, state
 
 
-class MinimaxTtsPlugin(PluginBase):
+class CloudTtsPlugin(PluginBase):
     @property
     def plugin_id(self) -> str:
         return state.PLUGIN_ID
@@ -22,11 +22,14 @@ class MinimaxTtsPlugin(PluginBase):
 
     @property
     def plugin_name(self) -> str:
-        return "MiniMax TTS"
+        return "Cloud TTS"
 
     @property
     def plugin_description(self) -> str:
-        return "MiniMax speech-2.x TTS adapter with character reference voice cloning."
+        return (
+            "Cloud TTS adapter for Shinsekai with per-character voice ID binding, "
+            "reference-audio voice cloning, and tone-control prompt helpers."
+        )
 
     @property
     def plugin_author(self) -> str:
@@ -42,25 +45,21 @@ class MinimaxTtsPlugin(PluginBase):
         plugin_root: Path,
         host: PluginHostContext,
     ) -> None:
-        # SDK 尚未提供“插件被禁用”的事件；host_hook 只负责禁用时清理失效的 MiniMax TTS 选择。
+        # SDK 尚未提供“插件被禁用”的事件；host_hook 只负责禁用时清理失效的 Cloud TTS 选择。
         host_hook.install()
         # SDK 也暂未提供模板钩子；prompt_hook 使用幂等 monkey patch 注入 MiniMax 语气约束。
         prompt_hook.install()
-        register.register_tts_adapter(state.PROVIDER_SLUG, MiniMaxTTSAdapter)
-        register.register_message_handler(
-            tts_handler=paragraph.ParagraphOnlyCharacterTtsHandler()
-        )
-
+        register.register_tts_adapter(state.PROVIDER_SLUG, CloudTTSAdapter)
         def _build_settings(ctx):
-            from plugins.minimax_tts.settings import MinimaxTtsSettingsWidget
+            from plugins.cloud_tts.settings import CloudTtsSettingsWidget
 
             _ = ctx
-            return MinimaxTtsSettingsWidget(plugin_root)
+            return CloudTtsSettingsWidget(plugin_root)
 
         register.register_settings_ui(
             SettingsUIContribution(
-                page_id="minimax_tts",
-                nav_label="MiniMax TTS",
+                page_id="cloud_tts",
+                nav_label="Cloud TTS",
                 build=_build_settings,
                 order=41.0,
             )

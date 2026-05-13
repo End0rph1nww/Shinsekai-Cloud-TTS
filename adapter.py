@@ -14,10 +14,79 @@ import requests
 
 from sdk.adapters import TTSAdapter
 
-from plugins.minimax_tts import state
+from plugins.cloud_tts import state
 
 
-class MiniMaxTTSAdapter(TTSAdapter):
+VALID_MODELS = (
+    "speech-2.8-hd",
+    "speech-2.8-turbo",
+    "speech-2.6-hd",
+    "speech-2.6-turbo",
+    "speech-02-hd",
+    "speech-02-turbo",
+    "speech-01-hd",
+    "speech-01-turbo",
+)
+VALID_LANGUAGE_BOOSTS = (
+    "Chinese",
+    "Chinese,Yue",
+    "English",
+    "Arabic",
+    "Russian",
+    "Spanish",
+    "French",
+    "Portuguese",
+    "German",
+    "Turkish",
+    "Dutch",
+    "Ukrainian",
+    "Vietnamese",
+    "Indonesian",
+    "Japanese",
+    "Italian",
+    "Korean",
+    "Thai",
+    "Polish",
+    "Romanian",
+    "Greek",
+    "Czech",
+    "Finnish",
+    "Hindi",
+    "Bulgarian",
+    "Danish",
+    "Hebrew",
+    "Malay",
+    "Persian",
+    "Slovak",
+    "Swedish",
+    "Croatian",
+    "Filipino",
+    "Hungarian",
+    "Norwegian",
+    "Slovenian",
+    "Catalan",
+    "Nynorsk",
+    "Tamil",
+    "Afrikaans",
+    "auto",
+)
+VALID_AUDIO_FORMATS = ("mp3", "pcm", "flac", "wav")
+VALID_SAMPLE_RATES = (8000, 16000, 22050, 24000, 32000, 44100)
+VALID_BITRATES = (32000, 64000, 128000, 256000)
+VALID_CHANNELS = (1, 2)
+VALID_EMOTIONS = (
+    "happy",
+    "sad",
+    "angry",
+    "fearful",
+    "disgusted",
+    "surprised",
+    "calm",
+    "fluent",
+)
+
+
+class CloudTTSAdapter(TTSAdapter):
     """MiniMax synchronous T2A adapter with voice clone cache support."""
 
     _CLONE_UPLOAD_SUFFIXES = {".mp3", ".m4a", ".wav"}
@@ -30,7 +99,7 @@ class MiniMaxTTSAdapter(TTSAdapter):
         default_voice_id: str = "",
         voice_id_map: dict[str, str] | str | None = None,
         voice_id_versions: dict[str, Any] | str | None = None,
-        voice_cache_path: str = "cache/audio/minimax_voice_cache.json",
+        voice_cache_path: str = "cache/audio/cloud_tts_voice_cache.json",
         language_boost: str = "auto",
         audio_format: str = "wav",
         sample_rate: int = 32000,
@@ -53,7 +122,7 @@ class MiniMaxTTSAdapter(TTSAdapter):
         if use_runtime_config:
             plugin_cfg = state.load_runtime_plugin_config()
             runtime_cfg = dict(plugin_cfg)
-            runtime_cfg.update(state.get_minimax_extra())
+            runtime_cfg.update(state.get_cloud_extra())
         if runtime_cfg:
             api_key = runtime_cfg.get("api_key", api_key)
             base_api_url = runtime_cfg.get("base_api_url", base_api_url)
@@ -89,20 +158,20 @@ class MiniMaxTTSAdapter(TTSAdapter):
             )
         self.api_key = (api_key or "").strip()
         self.base_api_url = (base_api_url or "https://api.minimaxi.com/v1").rstrip("/")
-        self.model = (model or "speech-2.8-hd").strip()
+        self.model = self._normalize_choice(model, VALID_MODELS, "speech-2.8-hd")
         self.default_voice_id = (default_voice_id or "").strip()
         self.voice_id_map = self._coerce_voice_id_map(voice_id_map)
         self.voice_id_versions = voice_id_versions
         self.voice_cache_path = state.project_path(voice_cache_path)
-        self.language_boost = (language_boost or "auto").strip()
-        self.audio_format = (audio_format or "wav").strip().lower()
-        self.sample_rate = int(sample_rate or 32000)
-        self.bitrate = int(bitrate or 128000)
-        self.channel = int(channel or 1)
-        self.speed = float(speed or 1.0)
-        self.vol = float(vol or 1.0)
-        self.pitch = int(pitch or 0)
-        self.emotion = (emotion or "").strip()
+        self.language_boost = self._normalize_choice(language_boost, VALID_LANGUAGE_BOOSTS, "auto")
+        self.audio_format = self._normalize_choice(audio_format, VALID_AUDIO_FORMATS, "wav")
+        self.sample_rate = self._normalize_sample_rate(sample_rate)
+        self.bitrate = self._normalize_numeric_choice(bitrate, VALID_BITRATES, 128000)
+        self.channel = self._normalize_numeric_choice(channel, VALID_CHANNELS, 1)
+        self.speed = self._clamp_float(speed, 1.0, 0.5, 2.0)
+        self.vol = self._clamp_float(vol, 1.0, 0.0, 10.0)
+        self.pitch = self._clamp_int(pitch, 0, -12, 12)
+        self.emotion = self._normalize_emotion(emotion)
         self.request_timeout = int(request_timeout or 120)
         self.auto_clone_from_reference = bool(auto_clone_from_reference)
         self.need_noise_reduction = bool(need_noise_reduction)
@@ -127,7 +196,11 @@ class MiniMaxTTSAdapter(TTSAdapter):
 
     def switch_model(self, model_info: Any) -> None:
         if isinstance(model_info, dict):
-            vid = str(model_info.get("minimax_voice_id") or "").strip()
+            vid = str(
+                model_info.get("cloud_voice_id")
+                or model_info.get("minimax_voice_id")
+                or ""
+            ).strip()
             if vid:
                 name = str(model_info.get("character_name") or "").strip()
                 if name:
@@ -136,7 +209,7 @@ class MiniMaxTTSAdapter(TTSAdapter):
                     self.default_voice_id = vid
 
     def _log(self, message: str) -> None:
-        print(f"MiniMax TTS\uff1a{message}", flush=True)
+        print(f"Cloud TTS\uff1a{message}", flush=True)
 
     def generate_speech(self, text, file_path=None, **kwargs):
         if not self.api_key:
@@ -153,7 +226,7 @@ class MiniMaxTTSAdapter(TTSAdapter):
             f"\u5f00\u59cb\u5408\u6210\uff1a\u89d2\u8272={character_name}\uff0c"
             f"\u6587\u672c\u957f\u5ea6={len(text_value)}\uff0c\u6a21\u578b={self.model}"
         )
-        out_path = Path(file_path or f"cache/audio/minimax_{int(time.time() * 1000)}.{self.audio_format}")
+        out_path = Path(file_path or f"cache/audio/cloud_tts_{int(time.time() * 1000)}.{self.audio_format}")
         if out_path.suffix and out_path.suffix.lower().lstrip(".") != self.audio_format:
             out_path = out_path.with_suffix(f".{self.audio_format}")
         out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -166,10 +239,12 @@ class MiniMaxTTSAdapter(TTSAdapter):
             return None
 
         speed = kwargs.get("speed_factor")
-        try:
-            speed_value = float(speed) if speed is not None else self.speed
-        except (TypeError, ValueError):
-            speed_value = self.speed
+        speed_value = self._clamp_float(
+            speed if speed is not None else self.speed,
+            self.speed,
+            0.5,
+            2.0,
+        )
 
         language_boost = self._language_boost_for(kwargs.get("text_lang"))
         payload: dict[str, Any] = {
@@ -199,7 +274,8 @@ class MiniMaxTTSAdapter(TTSAdapter):
             self._log(
                 "\u5408\u6210\u53c2\u6570\uff1a"
                 f"voice_id={voice_id}\uff0c\u8bed\u8a00\u589e\u5f3a={language_boost}\uff0c"
-                f"\u683c\u5f0f={self.audio_format}\uff0c\u8bed\u901f={speed_value:.2f}"
+                f"\u683c\u5f0f={self.audio_format}\uff0c"
+                f"\u91c7\u6837\u7387={self.sample_rate}\uff0c\u8bed\u901f={speed_value:.2f}"
             )
             self._log(
                 "\u6b63\u5728\u8bf7\u6c42 MiniMax \u6587\u751f\u97f3\u63a5\u53e3 /t2a_v2 ..."
@@ -326,14 +402,14 @@ class MiniMaxTTSAdapter(TTSAdapter):
                 return path
             raise RuntimeError(
                 "Reference audio needs conversion. Install plugin dependencies with: "
-                "runtime\\python.exe -m pip install -r plugins\\minimax_tts\\requirements.txt"
+                "runtime\\python.exe -m pip install -r plugins\\cloud_tts\\requirements.txt"
             )
 
         self._log(
             "\u6b63\u5728\u628a\u53c2\u8003\u97f3\u9891\u8f6c\u6362\u4e3a "
             "MiniMax \u53ef\u63a5\u53d7\u7684 wav \u683c\u5f0f..."
         )
-        out_dir = state.project_path("cache/audio/minimax_upload")
+        out_dir = state.project_path("cache/audio/cloud_tts_upload")
         out_dir.mkdir(parents=True, exist_ok=True)
         out_path = out_dir / f"{path.stem}_{state.short_hash(str(path) + str(path.stat().st_mtime_ns), 10)}.wav"
         cmd = [
@@ -442,6 +518,62 @@ class MiniMaxTTSAdapter(TTSAdapter):
             if key.strip().lower() == character_name.strip().lower():
                 return str(value or "").strip()
         return ""
+
+    @staticmethod
+    def _normalize_sample_rate(value: Any) -> int:
+        try:
+            sample_rate = int(value)
+        except (TypeError, ValueError):
+            return 32000
+        if sample_rate in VALID_SAMPLE_RATES:
+            return sample_rate
+        return min(VALID_SAMPLE_RATES, key=lambda item: abs(item - sample_rate))
+
+    @staticmethod
+    def _normalize_numeric_choice(value: Any, valid: tuple[int, ...], default: int) -> int:
+        try:
+            item = int(value)
+        except (TypeError, ValueError):
+            return default
+        if item in valid:
+            return item
+        return min(valid, key=lambda candidate: abs(candidate - item))
+
+    @staticmethod
+    def _normalize_choice(value: Any, valid: tuple[str, ...], default: str) -> str:
+        item = str(value or "").strip()
+        if item in valid:
+            return item
+        lowered = item.lower()
+        for candidate in valid:
+            if candidate.lower() == lowered:
+                return candidate
+        return default
+
+    @staticmethod
+    def _normalize_emotion(value: Any) -> str:
+        item = str(value or "").strip()
+        if not item:
+            return ""
+        if item == "neutral":
+            item = "calm"
+        return CloudTTSAdapter._normalize_choice(item, VALID_EMOTIONS, "")
+
+    @staticmethod
+    def _clamp_float(value: Any, default: float, minimum: float, maximum: float) -> float:
+        try:
+            item = float(value)
+        except (TypeError, ValueError):
+            return default
+        return max(minimum, min(maximum, item))
+
+    @staticmethod
+    def _clamp_int(value: Any, default: int, minimum: int, maximum: int) -> int:
+        try:
+            item = int(value)
+        except (TypeError, ValueError):
+            return default
+        return max(minimum, min(maximum, item))
 
     def _coerce_voice_id_map(self, value: dict[str, str] | str | None) -> dict[str, str]:
         if value is None:
