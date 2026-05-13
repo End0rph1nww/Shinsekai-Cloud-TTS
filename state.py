@@ -70,12 +70,16 @@ QWEN_VC_MODEL = "qwen3-tts-vc-2026-01-22"
 # 所有 Cloud TTS 支持的 provider slug
 ALL_CLOUD_TTS_SLUGS = frozenset({PROVIDER_SLUG, QWEN_PROVIDER_SLUG})
 
+# 提示词约束块标记：注入时包裹在 system prompt 两端，移除时通过正则匹配这两个标记定位
 CONSTRAINT_START = "<<<CLOUD_TTS_TONE_CONSTRAINT_START>>>"
 CONSTRAINT_END = "<<<CLOUD_TTS_TONE_CONSTRAINT_END>>>"
+# 兼容旧版 MiniMax 插件标记，否则升级后旧块删不掉会重复追加
 LEGACY_CONSTRAINT_START = "<<<MINIMAX_TTS_TONE_CONSTRAINT_START>>>"
 LEGACY_CONSTRAINT_END = "<<<MINIMAX_TTS_TONE_CONSTRAINT_END>>>"
+# 抑制注入的时间戳：插件保存配置后短暂抑制注入，避免保存触发连锁同步
 _PROMPT_CONSTRAINT_SUPPRESS_UNTIL = 0.0
 
+# MiniMax 支持的 19 种语气标签，受语气标签保护开关管控
 CLOUD_TTS_TONE_TAGS = (
     "(laughs)",
     "(chuckle)",
@@ -688,8 +692,10 @@ def get_character_constraint_record_for_language(
     voice_language: Any = "auto",
 ) -> dict[str, Any] | None:
     """
-    Get the constraint record for the runtime prompt language.
-    UI selection is only for editing and does not affect injection language.
+    获取角色在运行时语音语言下的约束记录。
+
+    优先级：手改版本 > 固定槽位默认版本 > None。
+    设置页的语言下拉框仅用于编辑，不影响注入语言；注入语言跟随主程序当前语音语言。
     """
     store = load_character_constraints(character_name)
     language = _runtime_prompt_language(voice_language)
@@ -746,8 +752,10 @@ def get_character_constraint_text(
     voice_language: Any = "auto",
 ) -> str | None:
     """
-    Get the constraint text matching the main program's current voice language.
-    The settings-page language dropdown is only an editor selector.
+    获取角色在当前主程序语音语言下的提示词约束文本。
+
+    注入语言跟随主程序当前语音语言，不受设置页语言下拉框影响。
+    无记录或标记为 default 时回退到硬编码默认模板。
     """
     language = _runtime_prompt_language(voice_language)
     record = get_character_constraint_record_for_language(character_name, language)
@@ -805,15 +813,15 @@ def migrate_constraints_from_v0() -> dict[str, int]:
 
 
 def remove_prompt_constraint_text(text: str) -> str:
-    """Remove constraint markers and content from text."""
+    """从模板文本中移除约束标记及其内容（同时兼容新旧两套标记）。"""
     src = text or ""
-    # 兼容旧 MiniMax 插件标记。否则升级到 Cloud TTS 后，旧块删不掉，
-    # 每次同步都会在模板里再追加一段新的约束词。
+    # 兼容旧 MiniMax 插件标记，否则升级到 Cloud TTS 后旧块删不掉会重复追加
     patterns = (
         (CONSTRAINT_START, CONSTRAINT_END),
         (LEGACY_CONSTRAINT_START, LEGACY_CONSTRAINT_END),
     )
     for start, end in patterns:
+        # 非贪婪匹配约束块，连同尾随空白一并删除
         pattern = re.compile(
             rf"{re.escape(start)}.*?{re.escape(end)}[ \t]*(?:\r?\n)*",
             re.DOTALL,
@@ -823,7 +831,7 @@ def remove_prompt_constraint_text(text: str) -> str:
 
 
 def unwrap_prompt_constraint_text(text: str) -> str:
-    """Return the body inside a prompt constraint block."""
+    """从约束块中提取内部正文（去掉 <<<MARKER>>> 包裹）。"""
     src = (text or "").strip()
     for start, end in (
         (CONSTRAINT_START, CONSTRAINT_END),
@@ -840,13 +848,18 @@ def unwrap_prompt_constraint_text(text: str) -> str:
 
 
 def wrap_prompt_constraint_text(body: str) -> str:
-    """Wrap a prompt constraint body with Cloud TTS markers."""
+    """用 Cloud TTS 约束标记包裹正文。"""
     clean = (body or "").strip()
     return f"{CONSTRAINT_START}\n{clean}\n{CONSTRAINT_END}"
 
 
 def combine_prompt_constraint_texts(texts: list[str]) -> str:
-    """Combine multiple per-character constraints into one marked block."""
+    """合并多个角色的提示词约束为一个约束块。
+
+    - 单角色：直接包裹该角色的约束正文
+    - 多角色：加通用 guard（强制 translate 字段规则），再按角色分列各自的语言约束
+    - 相同正文去重
+    """
     bodies: list[str] = []
     seen: set[str] = set()
     for text in texts:
@@ -872,7 +885,11 @@ def combine_prompt_constraint_texts(texts: list[str]) -> str:
 
 
 def protect_tone_tags(text: str) -> tuple[str, dict[str, str]]:
-    """Replace Cloud TTS tone tags with placeholders before generic parenthesis cleanup."""
+    """在主程序 remove_parentheses 执行前，把 19 种 MiniMax 语气标签替换为无括号占位符。
+
+    返回 (受保护文本, 占位符→原始标签映射)。
+    占位符不含括号，所以不会在后续的括号清理中被误删。
+    """
     protected = str(text or "")
     placeholders: dict[str, str] = {}
     for index, tag in enumerate(CLOUD_TTS_TONE_TAGS):
@@ -885,6 +902,7 @@ def protect_tone_tags(text: str) -> tuple[str, dict[str, str]]:
 
 
 def restore_tone_tags(text: str, placeholders: dict[str, str]) -> str:
+    """在 remove_parentheses 执行完毕后，把占位符还原为原始 MiniMax 语气标签。"""
     restored = str(text or "")
     for token, tag in placeholders.items():
         restored = restored.replace(token, tag)
@@ -892,7 +910,7 @@ def restore_tone_tags(text: str, placeholders: dict[str, str]) -> str:
 
 
 def add_prompt_constraint_text(text: str, constraint: str | None = None) -> str:
-    """Add constraint text to prompt."""
+    """把提示词约束块注入到 system prompt 最顶部（先清旧块，再加新块）。"""
     constraint_text = constraint or ""
     base = remove_prompt_constraint_text(text)
     if base:
@@ -1672,6 +1690,7 @@ def prompt_constraint_suppressed() -> bool:
 
 
 def prompt_constraint_enabled() -> bool:
+    """提示词约束开关是否在设置页被用户开启（读 config.json 的 auto_prompt_constraint 字段）。"""
     cfg = load_plugin_base_config()
     if "auto_prompt_constraint" in cfg:
         return bool(cfg.get("auto_prompt_constraint"))
@@ -1679,7 +1698,7 @@ def prompt_constraint_enabled() -> bool:
 
 
 def prompt_constraint_active() -> bool:
-    """只有插件启用且主 TTS 已选择 MiniMax 时，才向模板注入语气约束。"""
+    """运行时判断是否应该注入提示词约束：插件启用 + 主 TTS 是 MiniMax + 约束开关已开 + 未被抑制。"""
     if prompt_constraint_suppressed():
         return False
     if not plugin_manifest_enabled():

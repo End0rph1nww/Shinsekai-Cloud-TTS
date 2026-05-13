@@ -9,6 +9,7 @@ from typing import Any, Callable
 from plugins.cloud_tts import state
 
 
+# 保存原始方法的属性名常量，用于 monkey-patch 时记录被替换前的原始函数
 _API_SAVE_ORIGINAL_ATTR = "_cloud_tts_original_api_save"
 _API_SAVE_HOOK_ATTR = "_cloud_tts_api_save_hook"
 _LEGACY_TEMPLATE_ORIGINAL_ATTR = "_cloud_tts_original_generate_chat_template"
@@ -21,6 +22,7 @@ _TEXT_PROCESSOR_HOOK_ATTR = "_cloud_tts_remove_parentheses_hook"
 
 
 def _provider_wants_constraint(provider: str | None) -> bool:
+    """判断当前 provider 是否需要注入提示词约束 —— 仅 MiniMax 生效，Qwen 不走这套。"""
     if not state.is_cloud_tts_provider(provider):
         return False
     if not state.plugin_manifest_enabled():
@@ -29,6 +31,7 @@ def _provider_wants_constraint(provider: str | None) -> bool:
 
 
 def _selected_template_characters(template_tab: Any) -> list[str]:
+    """从模板设置页获取当前选中的角色列表。"""
     getter = getattr(template_tab, "_selected_chars", None)
     if not callable(getter):
         return []
@@ -42,6 +45,7 @@ def _selected_template_characters(template_tab: Any) -> list[str]:
 
 
 def _looks_like_generated_template(text: str, selected_characters: list[str]) -> bool:
+    """判断文本是否看起来像是已生成的模板（包含角色名和 speech 字段），避免对空白或未生成模板误注入。"""
     base = state.remove_prompt_constraint_text(text).strip()
     if not base:
         return False
@@ -51,6 +55,7 @@ def _looks_like_generated_template(text: str, selected_characters: list[str]) ->
 
 
 def _unpatch_legacy_template_generator() -> None:
+    """卸载旧版 TemplateGenerator.generate_chat_template 的 monkey-patch（兼容历史版本）。"""
     try:
         from llm.template_generator import TemplateGenerator
     except Exception:
@@ -66,6 +71,7 @@ def _unpatch_legacy_template_generator() -> None:
 
 
 def _template_settings_tab_class() -> type | None:
+    """获取 TemplateSettingsTab 类，优先从已加载模块取，不行再 import。"""
     module = sys.modules.get("ui.settings_ui.tabs.template_tab")
     cls = getattr(module, "TemplateSettingsTab", None) if module is not None else None
     if cls is not None:
@@ -78,6 +84,7 @@ def _template_settings_tab_class() -> type | None:
 
 
 def _session_path_from_template_tab(template_tab: Any) -> Path | None:
+    """从模板 Tab 实例推导出 session 文件的路径，用于同步注入。"""
     ctx = getattr(template_tab, "_ctx", None)
     template_dir_path = getattr(ctx, "template_dir_path", None)
     candidates: list[Path] = []
@@ -112,6 +119,7 @@ def _session_path_from_template_tab(template_tab: Any) -> Path | None:
 
 
 def _sync_template_session_file(template_tab: Any, provider: str | None) -> None:
+    """将注入/移除约束后的模板文本写回 session 文件，保证下次启动也能读到正确状态。"""
     path = _session_path_from_template_tab(template_tab)
     if path is None or not path.is_file():
         return
@@ -142,7 +150,7 @@ def _sync_template_session_file(template_tab: Any, provider: str | None) -> None
 
 
 def _get_character_constraint_text(character_name: str) -> str | None:
-    """Get runtime-language constraint text for a character."""
+    """获取某个角色在当前主程序语音语言下的提示词约束文本。注入语言跟随主程序，不受设置页下拉框影响。"""
     return state.get_character_constraint_text(
         character_name,
         state.current_system_voice_language(),
@@ -154,32 +162,37 @@ def _sync_template_text(
     provider: str | None,
     selected_characters: list[str],
 ) -> str:
+    """核心注入逻辑：根据 provider 和开关状态，决定注入还是移除提示词约束块。"""
     old = text or ""
     if not selected_characters:
         return state.remove_prompt_constraint_text(old)
 
     wants_constraint = _provider_wants_constraint(provider)
     if not wants_constraint:
+        # 条件不满足 → 清除已有约束块
         return state.remove_prompt_constraint_text(old)
     if not _looks_like_generated_template(old, selected_characters):
+        # 还未生成模板或模板不完整 → 不注入
         return old
 
-    # Collect constraint texts from all selected characters.
-    # 注入语言跟随主程序当前语音语言；不同角色仍可维护各自的同语种模板。
+    # 收集所有选中角色的约束文本（按当前语音语言）
     constraint_texts: list[str] = []
     for name in selected_characters:
         ct = _get_character_constraint_text(name)
         if ct:
             constraint_texts.append(ct)
 
+    # 合并多角色约束：单角色直接包裹，多角色加通用 guard 后按角色分列
     constraint_text = state.combine_prompt_constraint_texts(constraint_texts)
     if constraint_text:
+        # 把约束块注入到 system prompt 最顶部
         return state.add_prompt_constraint_text(old, constraint_text)
 
     return state.remove_prompt_constraint_text(old)
 
 
 def _sync_template_tab(template_tab: Any, provider: str | None) -> None:
+    """同步模板 Tab 里的 system_template_text：注入或清除约束块。"""
     field = getattr(template_tab, "template_output", None)
     if (
         field is None
@@ -196,6 +209,7 @@ def _sync_template_tab(template_tab: Any, provider: str | None) -> None:
 
 
 def _sync_open_template_editor(api_tab: Any, provider: str | None) -> None:
+    """API 页保存后同步模板编辑器和 session 文件。"""
     window = api_tab.window() if hasattr(api_tab, "window") else None
     template_tab = getattr(window, "_template", None) if window is not None else None
     if template_tab is None:
@@ -205,19 +219,20 @@ def _sync_open_template_editor(api_tab: Any, provider: str | None) -> None:
 
 
 def _patch_api_save() -> None:
+    """Hook 1: monkey-patch API 设置页的 _on_save，保存后自动同步模板中的约束块。"""
     try:
         from ui.settings_ui.tabs.api_tab import ApiSettingsTab
     except Exception:
         return
     current = ApiSettingsTab._on_save
     if getattr(current, _API_SAVE_HOOK_ATTR, False):
-        return
+        return  # 已经 patch 过，避免重复包裹
 
     @wraps(current)
     def wrapped(self: Any, *args: Any, **kwargs: Any) -> Any:
-        result = current(self, *args, **kwargs)
+        result = current(self, *args, **kwargs)  # 先执行原保存逻辑
         try:
-            # 只读 API 页面保存后的真实配置状态，避免页面切换或插件页保存触发注入。
+            # 只读 API 页面保存后的真实配置状态，避免页面切换或插件页保存触发注入
             _sync_open_template_editor(self, state.current_tts_provider())
         except Exception:
             return result
@@ -225,10 +240,11 @@ def _patch_api_save() -> None:
 
     setattr(wrapped, _API_SAVE_HOOK_ATTR, True)
     setattr(wrapped, _API_SAVE_ORIGINAL_ATTR, current)
-    ApiSettingsTab._on_save = wrapped
+    ApiSettingsTab._on_save = wrapped  # 替换
 
 
 def _patch_template_restore() -> None:
+    """Hook 2: monkey-patch 模板页的 restore_last_launch_session，恢复会话后同步约束。"""
     TemplateSettingsTab = _template_settings_tab_class()
     if TemplateSettingsTab is None:
         return
@@ -238,7 +254,7 @@ def _patch_template_restore() -> None:
 
     @wraps(current)
     def wrapped(self: Any, *args: Any, **kwargs: Any) -> Any:
-        result = current(self, *args, **kwargs)
+        result = current(self, *args, **kwargs)  # 先恢复原会话
         try:
             provider = state.current_tts_provider()
             _sync_template_tab(self, provider)
@@ -253,6 +269,7 @@ def _patch_template_restore() -> None:
 
 
 def _patch_template_generate() -> None:
+    """Hook 3: monkey-patch 模板页的 _on_generate，生成新模板后自动同步约束。"""
     TemplateSettingsTab = _template_settings_tab_class()
     if TemplateSettingsTab is None:
         return
@@ -262,7 +279,7 @@ def _patch_template_generate() -> None:
 
     @wraps(current)
     def wrapped(self: Any, *args: Any, **kwargs: Any) -> Any:
-        result = current(self, *args, **kwargs)
+        result = current(self, *args, **kwargs)  # 先生成模板
         try:
             _sync_template_tab(self, state.current_tts_provider())
         except Exception:
@@ -275,6 +292,13 @@ def _patch_template_generate() -> None:
 
 
 def _patch_text_processor() -> None:
+    """Hook 4: monkey-patch TextProcessor.remove_parentheses，保护 MiniMax 语气标签不被主程序括号清理删掉。
+
+    原理：
+    1. protect_tone_tags: 把 (laughs)、(sighs) 等标签替换为 __CLOUD_TTS_TONE_TAG_0__ 占位符
+    2. 原 remove_parentheses 正常执行（占位符不含括号，不会被删）
+    3. restore_tone_tags: 占位符还原为真实标签
+    """
     try:
         from llm.text_processor import TextProcessor
     except Exception:
@@ -286,8 +310,11 @@ def _patch_text_processor() -> None:
     @wraps(current)
     def wrapped(self: Any, text: str, *args: Any, **kwargs: Any) -> str:
         if state.translate_tone_tag_protection_active():
+            # ① 把 19 种 MiniMax 语气标签替换为无括号占位符
             protected, placeholders = state.protect_tone_tags(text)
+            # ② 主程序原方法：删除所有 (xxx) 括号内容（占位符不受影响）
             cleaned = current(self, protected, *args, **kwargs)
+            # ③ 占位符还原为真实标签
             return state.restore_tone_tags(cleaned, placeholders)
         return current(self, text, *args, **kwargs)
 
@@ -297,15 +324,18 @@ def _patch_text_processor() -> None:
 
 
 def install() -> None:
-    _unpatch_legacy_template_generator()
-    _patch_api_save()
-    _patch_template_restore()
-    _patch_template_generate()
-    _patch_text_processor()
+    """插件启用时安装所有 monkey-patch。按依赖顺序执行。"""
+    _unpatch_legacy_template_generator()  # 先清理旧版 hook
+    _patch_api_save()                     # Hook 1: API 保存后注入约束
+    _patch_template_restore()             # Hook 2: 模板恢复后注入约束
+    _patch_template_generate()            # Hook 3: 模板生成后注入约束
+    _patch_text_processor()               # Hook 4: 保护语气标签不被括号清理删掉
 
 
 def uninstall() -> None:
+    """插件禁用时还原所有 monkey-patch，把被替换的方法恢复为原始版本。"""
     _unpatch_legacy_template_generator()
+    # 还原 TextProcessor.remove_parentheses
     try:
         from llm.text_processor import TextProcessor
 
@@ -319,6 +349,7 @@ def uninstall() -> None:
             TextProcessor.remove_parentheses = text_original
     except Exception:
         pass
+    # 还原 ApiSettingsTab._on_save
     try:
         from ui.settings_ui.tabs.api_tab import ApiSettingsTab
 
@@ -332,6 +363,7 @@ def uninstall() -> None:
             ApiSettingsTab._on_save = api_original
     except Exception:
         pass
+    # 还原 TemplateSettingsTab 的两个方法
     try:
         TemplateSettingsTab = _template_settings_tab_class()
         if TemplateSettingsTab is None:
