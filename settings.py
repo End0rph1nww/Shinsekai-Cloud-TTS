@@ -271,17 +271,20 @@ class MinimaxTtsSettingsWidget(QWidget):
         lay.addWidget(title)
 
         body = QLabel(
-            "先在首页 / 主菜单 API 设置页选择 MiniMax TTS，填写 API KEY 和 BASE URL 并保存；"
-            "本页不重复保存这两个连接凭证，只保存模型、合成参数、Paragraph 和 voice_id 绑定。\n\n"
-            "推荐开启 Paragraph 整段生成。开启后会按段落把台词整段交给 MiniMax，"
-            "更适合长句、停顿和语气标签；关闭后交回主程序原本的标点切分逻辑。\n\n"
-            "复刻声纹请在本页选择角色，确认角色已有参考音频，然后点击“上传所选角色参考音频并缓存 voice_id”。"
-            "生成的 voice_id 会保存在 data/plugins/com.shinsekai.minimax_tts/voices/，升级插件不会自动删除。\n\n"
-            "如果参考音频需要转换，插件会使用 imageio-ffmpeg 提供的 ffmpeg；"
-            "未安装依赖时，只能直接上传符合 MiniMax 要求的 mp3、m4a 或 wav 文件。"
+            “<b>① MiniMax TTS 选择：</b>先在首页 / 主菜单 API 设置页选择 MiniMax TTS，填写 API KEY 和 BASE URL 并保存；”
+            “本页不重复保存这两个连接凭证，只保存模型、合成参数、Paragraph 和 voice_id 绑定。<br/><br/>”
+            “<b>② ⭐功能开关（重要）：</b>「功能开关」区块的两个选项建议开启——“
+            “<b>Paragraph</b> 按段落整段生成，台词更长更自然；”
+            “<b>提示词约束</b> 则向 LLM 注入语气标签指令，让语音表现更丰富。<br/><br/>”
+            “<b>③ 声纹复刻：</b>请在本页选择角色，确认角色已有参考音频，然后点击「上传所选角色参考音频并缓存 voice_id」。”
+            “生成的 voice_id 保存在 <code>data/plugins/com.shinsekai.minimax_tts/voices/</code>，升级插件不会自动删除。<br/><br/>”
+            “<b>④ 参考音频格式：</b>插件会使用 imageio-ffmpeg 提供的 ffmpeg 自动转换；”
+            “未安装依赖时，只能直接上传符合 MiniMax 要求的 mp3、m4a 或 wav 文件。”
         )
         body.setWordWrap(True)
         body.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        # 支持富文本中的 HTML 标签
+        body.setTextFormat(Qt.TextFormat.RichText)
         lay.addWidget(body)
         return block
 
