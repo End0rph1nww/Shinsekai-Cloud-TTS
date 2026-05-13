@@ -1244,11 +1244,11 @@ class CloudTtsSettingsWidget(QWidget):
         self._update_default_template_buttons()
 
     def _update_default_template_buttons(self) -> None:
-        """默认模板角色仅允许保存和重置，不允许新建/删除版本."""
+        """默认模板角色不允许新建/删除版本；重置按钮对所有角色开放."""
         is_default = self.template_character_combo.currentText().strip() == "默认模板"
-        self.new_version_btn.setEnabled(False)
-        self.delete_version_btn.setEnabled(False)
-        self.reset_default_btn.setEnabled(is_default)
+        self.new_version_btn.setEnabled(not is_default)
+        self.delete_version_btn.setEnabled(not is_default)
+        self.reset_default_btn.setEnabled(True)
 
     def _on_constraint_version_changed(self, *, store: dict | None = None) -> None:
         """切换版本时加载名称和内容，仅在版本确实变化时写盘."""
@@ -1383,24 +1383,34 @@ class CloudTtsSettingsWidget(QWidget):
             QMessageBox.warning(self, "Cloud TTS", "删除失败。")
 
     def _reset_default_template(self) -> None:
-        """将默认模板恢复为硬编码原始内容，并全局同步."""
+        """将当前角色的当前语言模板重置为硬编码原始内容。默认模板会全局同步，普通角色仅重置自身。"""
         name = self.template_character_combo.currentText().strip()
-        if name != "默认模板":
+        if not name:
             return
+        is_default = name == "默认模板"
 
         vid = self.constraint_version_combo.currentData()
         if not vid:
-            QMessageBox.warning(self, "Cloud TTS", "请先选择要重置的默认模板版本。")
+            QMessageBox.warning(self, "Cloud TTS", "请先选择要重置的提示词版本。")
             return
         store = state.load_character_constraints(name)
         version = store.get("versions", {}).get(vid, {})
         language = version.get("language") if isinstance(version, dict) else None
         language = state._normalize_prompt_language(language) or state._prompt_language_from_version_id(vid)
+        if not language:
+            QMessageBox.warning(self, "Cloud TTS", "无法确定当前版本的语言，请重新选择版本后再试。")
+            return
         default_text = state.build_default_constraint_text(language)
+
+        if is_default:
+            prompt = "确认将当前默认模板重置为原始硬编码内容？\n此操作只会同步更新同语种、且仍跟随母版的角色版本。"
+        else:
+            language_label = dict(state.PROMPT_LANGUAGE_OPTIONS).get(language, language)
+            prompt = f"确认将角色「{name}」的 {language_label} 模板重置为原始硬编码内容？\n此操作不会影响其他角色。"
 
         reply = QMessageBox.question(
             self, "Cloud TTS",
-            "确认将当前默认模板重置为原始硬编码内容？\n此操作只会同步更新同语种、且仍跟随母版的角色版本。",
+            prompt,
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
         )
@@ -1416,11 +1426,16 @@ class CloudTtsSettingsWidget(QWidget):
             source="default",
             language=language,
         )
-        count = state.propagate_default_template(default_text, language=language)
+        if is_default:
+            count = state.propagate_default_template(default_text, language=language)
+            self.status.setText(
+                f"已重置默认模板为原始内容。已同步 {count} 个使用默认模板的角色。"
+            )
+        else:
+            self.status.setText(
+                f"已重置角色「{name}」的 {dict(state.PROMPT_LANGUAGE_OPTIONS).get(language, language)} 模板为原始内容。"
+            )
         self._refresh_constraint_version_combo()
-        self.status.setText(
-            f"已重置默认模板为原始内容。已同步 {count} 个使用默认模板的角色。"
-        )
 
     def _upload_selected_character(self) -> None:
         char = self._selected_character()
