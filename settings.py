@@ -52,6 +52,8 @@ class CloudTtsSettingsWidget(QWidget):
         self._characters: list[dict[str, Any]] = []
         self._voice_id_map: dict[str, str] = {}
         self._voice_id_versions: dict[str, list[dict[str, Any]]] = {}
+        self._local_reference_audio_map: dict[str, str] = {}
+        self._current_voice_character_name = ""
         self._build_ui()
         self._load_values()
         self._reload_characters()
@@ -112,6 +114,24 @@ class CloudTtsSettingsWidget(QWidget):
         self.ref_path.setWordWrap(True)
         self.ref_path.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         voice_lay.addWidget(self.ref_path)
+
+        local_ref_field = QWidget()
+        local_ref_lay = QHBoxLayout(local_ref_field)
+        local_ref_lay.setContentsMargins(0, 0, 0, 0)
+        local_ref_lay.setSpacing(8)
+        self.local_ref_path = self._line_edit("")
+        self.local_ref_path.setPlaceholderText("可选：不受主程序时长限制的本地参考音频")
+        self.local_ref_path.editingFinished.connect(self._store_current_local_reference_audio)
+        self.choose_local_ref_btn = QPushButton("选择")
+        self.choose_local_ref_btn.setFixedHeight(FIELD_HEIGHT)
+        self.choose_local_ref_btn.clicked.connect(self._choose_local_reference_audio)
+        self.clear_local_ref_btn = QPushButton("清除")
+        self.clear_local_ref_btn.setFixedHeight(FIELD_HEIGHT)
+        self.clear_local_ref_btn.clicked.connect(self._clear_local_reference_audio)
+        local_ref_lay.addWidget(self.local_ref_path, stretch=1)
+        local_ref_lay.addWidget(self.choose_local_ref_btn)
+        local_ref_lay.addWidget(self.clear_local_ref_btn)
+        voice_lay.addWidget(self._row("本地参考音频", local_ref_field))
 
         self.character_voice_id = self._voice_combo()
         self.character_voice_id.lineEdit().setPlaceholderText("该角色专用 voice_id")
@@ -294,7 +314,7 @@ class CloudTtsSettingsWidget(QWidget):
         foot_lay.addWidget(self.status)
         outer.addWidget(foot)
 
-        self.character_combo.currentIndexChanged.connect(self._sync_reference_label)
+        self.character_combo.currentIndexChanged.connect(self._on_character_changed)
 
     def _section(self, title: str) -> tuple[QGroupBox, QVBoxLayout]:
         box = QGroupBox(title)
@@ -319,7 +339,8 @@ class CloudTtsSettingsWidget(QWidget):
             "<b>2. 功能开关：</b>建议开启<b>提示词约束</b>，向 LLM 注入语气标签指令让语音表现更丰富。"
             "TTS 分段功能已由主程序接管，请在 API 设置页配置「TTS 分句发送」。<br/><br/>"
             "<b>3. 角色 voice_id：</b>选择角色后在下拉框中选择或粘贴 voice_id，支持多版本历史管理。"
-            "也可上传参考音频自动克隆 voice_id，结果缓存在 <code>data/plugins/com.shinsekai.cloud_tts/voices/</code>。<br/><br/>"
+            "也可选择本地参考音频后上传克隆 voice_id，绕开主程序参考音频时长限制；"
+            "结果缓存在 <code>data/plugins/com.shinsekai.cloud_tts/voices/</code>。<br/><br/>"
             "<b>4. 提示词模板：</b>选择角色后可管理约束版本（v1 / v2 …），每个版本可自定义名称和内容。"
             "「默认模板」角色是母版——修改保存后，所有标记为跟随母版的角色版本会自动同步更新。"
             "新建版本以默认模板为基底。手动保存某个角色版本后，该版本脱离母版不再自动同步。<br/><br/>"
@@ -477,6 +498,9 @@ class CloudTtsSettingsWidget(QWidget):
         )
         self._voice_id_map = self._coerce_voice_id_map(values.get("voice_id_map"))
         self._voice_id_versions = self._coerce_voice_id_versions(values.get("voice_id_versions"))
+        self._local_reference_audio_map = self._coerce_path_map(
+            values.get("local_reference_audio_map")
+        )
         self._ensure_versions_from_selected_map()
         self._refresh_default_voice_options(str(values.get("default_voice_id") or ""))
         self._set_combo(
@@ -583,6 +607,7 @@ class CloudTtsSettingsWidget(QWidget):
         self.character_voice_id.blockSignals(False)
 
     def _reload_characters(self) -> None:
+        self._store_current_local_reference_audio()
         current = self.character_combo.currentText()
         self._characters = state.load_characters()
         self.character_combo.blockSignals(True)
@@ -596,6 +621,7 @@ class CloudTtsSettingsWidget(QWidget):
             if idx >= 0:
                 self.character_combo.setCurrentIndex(idx)
         self.character_combo.blockSignals(False)
+        self._current_voice_character_name = self.character_combo.currentText().strip()
         self._sync_reference_label()
         self._refresh_template_characters()
 
@@ -607,6 +633,7 @@ class CloudTtsSettingsWidget(QWidget):
         char = self._selected_character()
         if not char:
             self.ref_path.setText("未找到角色。")
+            self.local_ref_path.setText("")
             return
         path = state.resolve_reference_audio(char)
         name = str(char.get("name") or "").strip()
@@ -616,7 +643,63 @@ class CloudTtsSettingsWidget(QWidget):
             self.ref_path.setText(f"参考音频不存在：{path}")
         else:
             self.ref_path.setText("该角色没有 refer_audio_path。")
+        self.local_ref_path.blockSignals(True)
+        self.local_ref_path.setText(self._local_reference_audio_map.get(name, ""))
+        self.local_ref_path.blockSignals(False)
         self._refresh_character_voice_options(name)
+
+    def _on_character_changed(self, _index: int) -> None:
+        self._store_local_reference_audio_for_name(self._current_voice_character_name)
+        self._current_voice_character_name = self.character_combo.currentText().strip()
+        self._sync_reference_label()
+
+    def _choose_local_reference_audio(self) -> None:
+        char = self._selected_character()
+        if not char:
+            QMessageBox.warning(self, "Cloud TTS", "请先选择角色。")
+            return
+        start_path = self.local_ref_path.text().strip()
+        if not start_path:
+            ref_path = state.resolve_reference_audio(char)
+            start_path = str(ref_path) if ref_path else str(state.project_root())
+        start = state.project_path(start_path)
+        start_dir = start if start.is_dir() else start.parent
+        path, _selected_filter = QFileDialog.getOpenFileName(
+            self,
+            "选择本地参考音频",
+            str(start_dir),
+            "Audio Files (*.wav *.mp3 *.m4a *.flac *.ogg *.aac);;All Files (*)",
+        )
+        if not path:
+            return
+        self.local_ref_path.setText(str(Path(path)))
+        self._store_current_local_reference_audio()
+        self.status.setText("已选择本地参考音频；点击保存配置后会随插件配置持久化。")
+
+    def _clear_local_reference_audio(self) -> None:
+        self.local_ref_path.clear()
+        self._store_current_local_reference_audio()
+        self.status.setText("已清除当前角色的本地参考音频。")
+
+    def _store_current_local_reference_audio(self) -> None:
+        self._store_local_reference_audio_for_name(self.character_combo.currentText().strip())
+
+    def _store_local_reference_audio_for_name(self, character_name: str) -> None:
+        name = (character_name or "").strip()
+        if not name or not hasattr(self, "local_ref_path"):
+            return
+        path = self.local_ref_path.text().strip()
+        if path:
+            self._local_reference_audio_map[name] = path
+        else:
+            self._local_reference_audio_map.pop(name, None)
+
+    def _reference_audio_for_upload(self, char: dict[str, Any]) -> tuple[Path | None, str]:
+        name = str(char.get("name") or "").strip()
+        local_path = self._local_reference_audio_map.get(name, "").strip()
+        if local_path:
+            return state.project_path(local_path).resolve(), "本地参考音频"
+        return state.resolve_reference_audio(char), "角色参考音频"
 
     def _store_current_character_voice_id(self) -> None:
         name = self.character_combo.currentText().strip()
@@ -647,6 +730,25 @@ class CloudTtsSettingsWidget(QWidget):
             vid = str(item or "").strip()
             if name and vid:
                 out[name] = vid
+        return out
+
+    def _coerce_path_map(self, value: Any) -> dict[str, str]:
+        if isinstance(value, str):
+            try:
+                value = json.loads(value)
+            except Exception:
+                try:
+                    value = ast.literal_eval(value)
+                except Exception:
+                    value = {}
+        if not isinstance(value, dict):
+            return {}
+        out: dict[str, str] = {}
+        for key, item in value.items():
+            name = str(key or "").strip()
+            path = str(item or "").strip()
+            if name and path:
+                out[name] = path
         return out
 
     def _coerce_voice_id_versions(self, value: Any) -> dict[str, list[dict[str, Any]]]:
@@ -714,11 +816,13 @@ class CloudTtsSettingsWidget(QWidget):
 
     def _values(self) -> dict[str, Any]:
         self._store_current_character_voice_id()
+        self._store_current_local_reference_audio()
         return {
             "model": str(self.model.currentData() or "speech-2.8-hd"),
             "default_voice_id": self._combo_voice_id(self.default_voice_id),
             "voice_id_map": dict(self._voice_id_map),
             "voice_id_versions": dict(self._voice_id_versions),
+            "local_reference_audio_map": dict(self._local_reference_audio_map),
             "language_boost": str(self.language_boost.currentData() or "auto"),
             "audio_format": str(self.audio_format.currentData() or "wav"),
             "sample_rate": int(self.sample_rate.currentData() or 32000),
@@ -1129,9 +1233,10 @@ class CloudTtsSettingsWidget(QWidget):
         if not char:
             QMessageBox.warning(self, "Cloud TTS", "没有选中的角色。")
             return
-        path = state.resolve_reference_audio(char)
+        self._store_current_local_reference_audio()
+        path, source_label = self._reference_audio_for_upload(char)
         if not path or not path.is_file():
-            QMessageBox.warning(self, "Cloud TTS", "角色参考音频不存在。")
+            QMessageBox.warning(self, "Cloud TTS", f"{source_label}不存在。")
             return
         if not str(state.get_cloud_extra().get("api_key") or "").strip():
             QMessageBox.warning(self, "Cloud TTS", "请先在 API 设定页填写 MiniMax API KEY。")
@@ -1153,9 +1258,10 @@ class CloudTtsSettingsWidget(QWidget):
                 self._ensure_voice_version(
                     name,
                     voice_id,
-                    source="upload",
+                    source="local_upload" if source_label.startswith("本地") else "upload",
                     model=str(self.model.currentData() or ""),
                     reference_audio_path=str(path),
+                    reference_audio_source=source_label,
                 )
                 self._voice_id_map[name] = voice_id
                 self._refresh_character_voice_options(name)

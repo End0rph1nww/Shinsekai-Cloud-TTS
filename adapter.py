@@ -100,6 +100,7 @@ class CloudTTSAdapter(TTSAdapter):
         voice_id_map: dict[str, str] | str | None = None,
         voice_id_versions: dict[str, Any] | str | None = None,
         voice_cache_path: str = "cache/audio/cloud_tts_voice_cache.json",
+        local_reference_audio_map: dict[str, str] | str | None = None,
         language_boost: str = "auto",
         audio_format: str = "wav",
         sample_rate: int = 32000,
@@ -134,6 +135,10 @@ class CloudTTSAdapter(TTSAdapter):
             voice_id_map = runtime_cfg.get("voice_id_map", voice_id_map)
             voice_id_versions = runtime_cfg.get("voice_id_versions", voice_id_versions)
             voice_cache_path = runtime_cfg.get("voice_cache_path", voice_cache_path)
+            local_reference_audio_map = runtime_cfg.get(
+                "local_reference_audio_map",
+                local_reference_audio_map,
+            )
             language_boost = runtime_cfg.get("language_boost", language_boost)
             audio_format = runtime_cfg.get("audio_format", audio_format)
             sample_rate = runtime_cfg.get("sample_rate", sample_rate)
@@ -163,6 +168,9 @@ class CloudTTSAdapter(TTSAdapter):
         self.voice_id_map = self._coerce_voice_id_map(voice_id_map)
         self.voice_id_versions = voice_id_versions
         self.voice_cache_path = state.project_path(voice_cache_path)
+        self.local_reference_audio_map = self._coerce_local_reference_audio_map(
+            local_reference_audio_map
+        )
         self.language_boost = self._normalize_choice(language_boost, VALID_LANGUAGE_BOOSTS, "auto")
         self.audio_format = self._normalize_choice(audio_format, VALID_AUDIO_FORMATS, "wav")
         self.sample_rate = self._normalize_sample_rate(sample_rate)
@@ -480,6 +488,17 @@ class CloudTTSAdapter(TTSAdapter):
     def _voice_id_for_request(self, **kwargs) -> str:
         character_name = str(kwargs.get("character_name") or "").strip()
         ref_audio_path = str(kwargs.get("ref_audio_path") or "").strip()
+        local_ref_path = self._local_reference_audio_for_character(character_name)
+        if local_ref_path:
+            if (
+                not ref_audio_path
+                or state.project_path(ref_audio_path).resolve() != local_ref_path
+            ):
+                self._log(
+                    f"\u4f7f\u7528\u89d2\u8272\u672c\u5730\u53c2\u8003\u97f3\u9891\uff1a"
+                    f"{character_name} -> {local_ref_path}"
+                )
+            ref_audio_path = str(local_ref_path)
         # 优先级保持不变：角色绑定 > 默认保底 > 自动克隆缓存 > 现场克隆。
         mapped = self._voice_id_for_character(character_name)
         if mapped:
@@ -518,6 +537,23 @@ class CloudTTSAdapter(TTSAdapter):
             if key.strip().lower() == character_name.strip().lower():
                 return str(value or "").strip()
         return ""
+
+    def _local_reference_audio_for_character(self, character_name: str) -> Path | None:
+        if not character_name:
+            return None
+        target = character_name.strip().lower()
+        for key, value in self.local_reference_audio_map.items():
+            if key.strip().lower() != target:
+                continue
+            raw = str(value or "").strip()
+            if not raw:
+                return None
+            path = state.project_path(raw).resolve()
+            if path.is_file():
+                return path
+            self._log(f"\u672c\u5730\u53c2\u8003\u97f3\u9891\u4e0d\u5b58\u5728\uff1a{path}")
+            return None
+        return None
 
     @staticmethod
     def _normalize_sample_rate(value: Any) -> int:
@@ -598,6 +634,34 @@ class CloudTTSAdapter(TTSAdapter):
             vid = str(item or "").strip()
             if name and vid:
                 out[name] = vid
+        return out
+
+    def _coerce_local_reference_audio_map(
+        self,
+        value: dict[str, str] | str | None,
+    ) -> dict[str, str]:
+        if value is None:
+            return {}
+        raw: Any = value
+        if isinstance(value, str):
+            text = value.strip()
+            if not text:
+                return {}
+            try:
+                raw = json.loads(text)
+            except json.JSONDecodeError:
+                try:
+                    raw = ast.literal_eval(text)
+                except (SyntaxError, ValueError):
+                    return {}
+        if not isinstance(raw, dict):
+            return {}
+        out: dict[str, str] = {}
+        for key, item in raw.items():
+            name = str(key or "").strip()
+            path = str(item or "").strip()
+            if name and path:
+                out[name] = path
         return out
 
     def _cache_data(self) -> dict[str, Any]:

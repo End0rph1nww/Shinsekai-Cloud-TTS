@@ -14,7 +14,7 @@ import yaml
 PROVIDER_SLUG = "minimax-tts"
 PLUGIN_ID = "com.shinsekai.cloud_tts"
 PLUGIN_ENTRY = "plugins.cloud_tts.plugin:CloudTtsPlugin"
-PLUGIN_VERSION = "0.7.5"
+PLUGIN_VERSION = "0.7.6"
 
 LEGACY_PROVIDER_SLUG = "cloud-tts"
 LEGACY_PLUGIN_ID = "com.shinsekai.minimax_tts"
@@ -42,6 +42,7 @@ PLUGIN_STATE_KEYS = {
     "pitch",
     "emotion",
     "request_timeout",
+    "local_reference_audio_map",
     "auto_clone_from_reference",
     "need_noise_reduction",
     "need_volume_normalization",
