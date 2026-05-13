@@ -67,6 +67,16 @@ class MinimaxTtsSettingsWidget(QWidget):
 
         root.addWidget(self._guide_block())
 
+       开关_box, 开关_lay = self._section("功能开关")
+        self.paragraph_split = self._checkbox("Paragraph：按段落整段生成（不按标点切分）")
+        self.paragraph_split.setChecked(True)
+        开关_lay.addWidget(self._check_row(self.paragraph_split))
+
+        self.prompt_constraint = self._checkbox("提示词约束：注入 MiniMax 语气标签指令（关闭则不注入）")
+        self.prompt_constraint.setChecked(False)
+        开关_lay.addWidget(self._check_row(self.prompt_constraint))
+        root.addWidget(开关_box)
+
         api_box, api_lay = self._section("模型与兜底声线")
         self.model = self._combo()
         for item in (
@@ -146,14 +156,6 @@ class MinimaxTtsSettingsWidget(QWidget):
         self.auto_clone = self._checkbox("未找到 voice_id 时，从角色参考音频自动克隆")
         self.auto_clone.setChecked(False)
         synth_lay.addWidget(self._check_row(self.auto_clone))
-
-        self.paragraph_split = self._checkbox("Paragraph：按段落整段生成（不按标点切分）")
-        self.paragraph_split.setChecked(True)
-        synth_lay.addWidget(self._check_row(self.paragraph_split))
-
-        self.prompt_constraint = self._checkbox("提示词约束：注入 MiniMax 语气标签指令（关闭则不监控）")
-        self.prompt_constraint.setChecked(False)
-        synth_lay.addWidget(self._check_row(self.prompt_constraint))
 
         self.request_timeout = self._spin()
         self.request_timeout.setRange(5, 600)
