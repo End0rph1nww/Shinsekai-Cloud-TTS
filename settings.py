@@ -68,7 +68,7 @@ class MinimaxTtsSettingsWidget(QWidget):
         root.addWidget(self._guide_block())
 
         switch_box, switch_lay = self._section("功能开关")
-        self.paragraph_split = self._checkbox("Paragraph：按段落整段生成（不按标点切分）")
+        self.paragraph_split = self._checkbox("Paragraph：按段落整段生成（不按标点切分）⭐推荐开启")
         self.paragraph_split.setChecked(True)
         switch_lay.addWidget(self._check_row(self.paragraph_split))
 
