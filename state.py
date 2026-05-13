@@ -14,7 +14,7 @@ import yaml
 PROVIDER_SLUG = "minimax-tts"
 PLUGIN_ID = "com.shinsekai.cloud_tts"
 PLUGIN_ENTRY = "plugins.cloud_tts.plugin:CloudTtsPlugin"
-PLUGIN_VERSION = "0.9.5"
+PLUGIN_VERSION = "0.9.6"
 
 LEGACY_PROVIDER_SLUG = "cloud-tts"
 LEGACY_PLUGIN_ID = "com.shinsekai.minimax_tts"
@@ -28,25 +28,11 @@ ADAPTER_CONFIG_KEYS = {
     "base_api_url",
 }
 
-# 这些字段由 MiniMax 插件设置页维护，运行时仍会传给 TTS adapter。
+# 这些字段由 Cloud TTS 插件设置页维护，运行时会传给 TTS adapter。
 PLUGIN_STATE_KEYS = {
     "model",
-    "voice_cache_path",
-    "language_boost",
-    "audio_format",
-    "sample_rate",
-    "bitrate",
-    "channel",
-    "speed",
-    "vol",
-    "pitch",
-    "emotion",
-    "request_timeout",
     "local_reference_audio_map",
-    "voice_language_map",
-    "auto_clone_from_reference",
-    "need_noise_reduction",
-    "need_volume_normalization",
+    "reference_audio_language_map",
     "auto_prompt_constraint",
 }
 
@@ -1092,21 +1078,6 @@ def coerce_voice_language_map(value: Any) -> dict[str, str]:
         if name and code != "auto":
             out[name] = code
     return out
-
-
-def voice_language_map_from_config() -> dict[str, str]:
-    cfg = load_plugin_base_config()
-    return coerce_voice_language_map(cfg.get("voice_language_map"))
-
-
-def voice_language_for_character(character_name: str) -> str:
-    name = (character_name or "").strip()
-    target = name.lower()
-    voice_map = voice_language_map_from_config()
-    for key, value in voice_map.items():
-        if key.strip().lower() == target:
-            return normalize_voice_language_code(value)
-    return current_system_voice_language()
 
 
 def migrate_api_extra_to_plugin_state(plugin_root: Path | None = None) -> None:

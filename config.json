@@ -1,20 +1,6 @@
 {
-    "model":  "speech-2.8-hd",
-    "language_boost":  "auto",
-    "auto_clone_from_reference":  false,
-    "local_reference_audio_map":  {},
-    "voice_language_map":  {},
-    "voice_cache_path":  "cache/audio/cloud_tts_voice_cache.json",
-    "clone_text":  "",
-    "need_noise_reduction":  false,
-    "need_volume_normalization":  true,
-    "speed":  1.0,
-    "vol":  1.0,
-    "pitch":  0,
-    "audio_format":  "wav",
-    "sample_rate":  32000,
-    "bitrate":  128000,
-    "channel":  1,
-    "request_timeout":  120,
-    "emotion":  ""
+    "model": "speech-2.8-hd",
+    "local_reference_audio_map": {},
+    "reference_audio_language_map": {},
+    "auto_prompt_constraint": false
 }

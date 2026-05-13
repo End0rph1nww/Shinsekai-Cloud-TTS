@@ -102,6 +102,7 @@ class CloudTTSAdapter(TTSAdapter):
         voice_language_map: dict[str, Any] | str | None = None,
         voice_cache_path: str = "cache/audio/cloud_tts_voice_cache.json",
         local_reference_audio_map: dict[str, str] | str | None = None,
+        reference_audio_language_map: dict[str, Any] | str | None = None,
         language_boost: str = "auto",
         audio_format: str = "wav",
         sample_rate: int = 32000,
@@ -135,33 +136,13 @@ class CloudTTSAdapter(TTSAdapter):
             )
             voice_id_map = runtime_cfg.get("voice_id_map", voice_id_map)
             voice_id_versions = runtime_cfg.get("voice_id_versions", voice_id_versions)
-            voice_language_map = runtime_cfg.get("voice_language_map", voice_language_map)
-            voice_cache_path = runtime_cfg.get("voice_cache_path", voice_cache_path)
             local_reference_audio_map = runtime_cfg.get(
                 "local_reference_audio_map",
                 local_reference_audio_map,
             )
-            language_boost = runtime_cfg.get("language_boost", language_boost)
-            audio_format = runtime_cfg.get("audio_format", audio_format)
-            sample_rate = runtime_cfg.get("sample_rate", sample_rate)
-            bitrate = runtime_cfg.get("bitrate", bitrate)
-            channel = runtime_cfg.get("channel", channel)
-            speed = runtime_cfg.get("speed", speed)
-            vol = runtime_cfg.get("vol", vol)
-            pitch = runtime_cfg.get("pitch", pitch)
-            emotion = runtime_cfg.get("emotion", emotion)
-            request_timeout = runtime_cfg.get("request_timeout", request_timeout)
-            auto_clone_from_reference = runtime_cfg.get(
-                "auto_clone_from_reference",
-                auto_clone_from_reference,
-            )
-            need_noise_reduction = runtime_cfg.get(
-                "need_noise_reduction",
-                need_noise_reduction,
-            )
-            need_volume_normalization = runtime_cfg.get(
-                "need_volume_normalization",
-                need_volume_normalization,
+            reference_audio_language_map = runtime_cfg.get(
+                "reference_audio_language_map",
+                reference_audio_language_map,
             )
         self.api_key = self._normalize_api_key(api_key)
         self.base_api_url = (base_api_url or "https://api.minimaxi.com/v1").rstrip("/")
@@ -173,6 +154,9 @@ class CloudTTSAdapter(TTSAdapter):
         self.voice_cache_path = state.project_path(voice_cache_path)
         self.local_reference_audio_map = self._coerce_local_reference_audio_map(
             local_reference_audio_map
+        )
+        self.reference_audio_language_map = state.coerce_voice_language_map(
+            reference_audio_language_map
         )
         self.language_boost = self._normalize_choice(language_boost, VALID_LANGUAGE_BOOSTS, "auto")
         self.audio_format = self._normalize_choice(audio_format, VALID_AUDIO_FORMATS, "wav")
@@ -323,6 +307,7 @@ class CloudTTSAdapter(TTSAdapter):
         character_name: str = "",
         prompt_text: str = "",
         voice_id: str = "",
+        reference_audio_language: str = "auto",
     ) -> str:
         self._ensure_api_key()
         path = state.project_path(audio_path).resolve()
@@ -343,6 +328,9 @@ class CloudTTSAdapter(TTSAdapter):
             "need_noise_reduction": self.need_noise_reduction,
             "need_volume_normalization": self.need_volume_normalization,
         }
+        clone_language_boost = self._language_boost_from_code(reference_audio_language)
+        if clone_language_boost:
+            payload["language_boost"] = clone_language_boost
         self._log(
             "\u6b63\u5728\u521b\u5efa MiniMax \u514b\u9686\u58f0\u7ebf /voice_clone ..."
         )
@@ -364,6 +352,9 @@ class CloudTTSAdapter(TTSAdapter):
                     "source": "auto_clone",
                     "model": self.model,
                     "reference_audio_path": str(path),
+                    "reference_audio_language": state.normalize_voice_language_code(
+                        reference_audio_language
+                    ),
                 },
                 selected=True,
             )
@@ -517,6 +508,13 @@ class CloudTTSAdapter(TTSAdapter):
         code = self._voice_language_for_character(character_name)
         if code == "auto":
             code = state.normalize_voice_language_code(text_lang)
+        boosted = self._language_boost_from_code(code)
+        if boosted:
+            return boosted
+        return self.language_boost or "auto"
+
+    def _language_boost_from_code(self, code: Any) -> str:
+        code = state.normalize_voice_language_code(code)
         if code == "ja":
             return "Japanese"
         if code == "zh":
@@ -525,7 +523,7 @@ class CloudTTSAdapter(TTSAdapter):
             return "Chinese,Yue"
         if code == "en":
             return "English"
-        return self.language_boost or "auto"
+        return "auto" if code == "auto" else ""
 
     def _voice_id_for_request(self, **kwargs) -> str:
         character_name = str(kwargs.get("character_name") or "").strip()
@@ -569,6 +567,9 @@ class CloudTTSAdapter(TTSAdapter):
                 ref_audio_path,
                 character_name=character_name,
                 prompt_text=prompt_text,
+                reference_audio_language=self._reference_audio_language_for_character(
+                    character_name
+                ),
             )
         return ""
 
@@ -596,6 +597,15 @@ class CloudTTSAdapter(TTSAdapter):
             self._log(f"\u672c\u5730\u53c2\u8003\u97f3\u9891\u4e0d\u5b58\u5728\uff1a{path}")
             return None
         return None
+
+    def _reference_audio_language_for_character(self, character_name: str) -> str:
+        if not character_name:
+            return "auto"
+        target = character_name.strip().lower()
+        for key, value in self.reference_audio_language_map.items():
+            if key.strip().lower() == target:
+                return state.normalize_voice_language_code(value)
+        return "auto"
 
     @staticmethod
     def _normalize_sample_rate(value: Any) -> int:

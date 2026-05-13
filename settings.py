@@ -12,7 +12,6 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QDialog,
-    QDoubleSpinBox,
     QFileDialog,
     QFrame,
     QGroupBox,
@@ -23,7 +22,6 @@ from PySide6.QtWidgets import (
     QPushButton,
     QScrollArea,
     QSizePolicy,
-    QSpinBox,
     QTextEdit,
     QVBoxLayout,
     QWidget,
@@ -31,12 +29,7 @@ from PySide6.QtWidgets import (
 
 from plugins.cloud_tts.adapter import (
     CloudTTSAdapter,
-    VALID_AUDIO_FORMATS,
-    VALID_BITRATES,
-    VALID_EMOTIONS,
-    VALID_LANGUAGE_BOOSTS,
     VALID_MODELS,
-    VALID_SAMPLE_RATES,
 )
 from plugins.cloud_tts import state
 
@@ -54,7 +47,7 @@ class CloudTtsSettingsWidget(QWidget):
         self._voice_id_map: dict[str, str] = {}
         self._voice_id_versions: dict[str, list[dict[str, Any]]] = {}
         self._local_reference_audio_map: dict[str, str] = {}
-        self._voice_language_map: dict[str, str] = {}
+        self._reference_audio_language_map: dict[str, str] = {}
         self._current_voice_character_name = ""
         self._current_template_character_name = ""
         self._build_ui()
@@ -155,6 +148,21 @@ class CloudTtsSettingsWidget(QWidget):
         upload_hint.setStyleSheet("color: #888; font-size: 12px; padding-left: 146px;")
         voice_lay.addWidget(upload_hint)
 
+        self.reference_audio_language = self._combo()
+        reference_language_options = (
+            ("auto", "自动识别 / auto"),
+            ("zh", "中文"),
+            ("ja", "日语"),
+            ("yue", "粤语"),
+            ("en", "英语"),
+        )
+        for code, label in reference_language_options:
+            self.reference_audio_language.addItem(label, code)
+        self.reference_audio_language.currentIndexChanged.connect(
+            lambda _index: self._store_current_reference_audio_language()
+        )
+        voice_lay.addWidget(self._row("参考音频语言", self.reference_audio_language))
+
         self.character_voice_id = self._voice_combo()
         self.character_voice_id.lineEdit().setPlaceholderText("该角色专用 voice_id")
         self.character_voice_id.currentIndexChanged.connect(
@@ -182,14 +190,6 @@ class CloudTtsSettingsWidget(QWidget):
         voice_actions_lay.addWidget(self.import_voice_btn)
         voice_lay.addWidget(voice_actions)
 
-        self.need_noise_reduction = self._checkbox("克隆时启用降噪")
-        voice_lay.addWidget(self._check_row(self.need_noise_reduction))
-
-        self.need_volume_normalization = self._checkbox("克隆时音量归一")
-        voice_lay.addWidget(self._check_row(self.need_volume_normalization))
-
-        self.voice_cache_path = self._line_edit("cache/audio/cloud_tts_voice_cache.json")
-
         root.addWidget(voice_box)
 
         template_box, template_lay = self._section("提示词模板")
@@ -212,6 +212,15 @@ class CloudTtsSettingsWidget(QWidget):
         self.constraint_text_edit = QTextEdit()
         self.constraint_text_edit.setMinimumHeight(200)
         template_lay.addWidget(self.constraint_text_edit)
+
+        template_hint = QLabel(
+            "提示词模板只提供中文、日语、粤语、英语四套固定默认模板。"
+            "你可以为每个角色分别修改对应语言模板；运行时插件会读取主程序当前选择的语音语言，"
+            "自动注入该角色对应语言的约束词，不由这里的下拉框决定。"
+        )
+        template_hint.setWordWrap(True)
+        template_hint.setStyleSheet("color: #888; font-size: 12px;")
+        template_lay.addWidget(template_hint)
 
         template_actions = QWidget()
         template_actions.setFixedHeight(ROW_HEIGHT)
@@ -248,63 +257,6 @@ class CloudTtsSettingsWidget(QWidget):
         api_lay.addWidget(self._row("无角色兜底 voice_id", self.default_voice_id))
         root.addWidget(api_box)
 
-        synth_box, synth_lay = self._section("合成参数")
-        self.language_boost = self._combo()
-        for item in VALID_LANGUAGE_BOOSTS:
-            self.language_boost.addItem(item, item)
-        synth_lay.addWidget(self._row("语言增强", self.language_boost))
-
-        self.audio_format = self._combo()
-        for item in VALID_AUDIO_FORMATS:
-            self.audio_format.addItem(item, item)
-        synth_lay.addWidget(self._row("音频格式", self.audio_format))
-
-        self.sample_rate = self._combo()
-        for value in VALID_SAMPLE_RATES:
-            self.sample_rate.addItem(str(value), str(value))
-        synth_lay.addWidget(self._row("采样率", self.sample_rate))
-
-        self.bitrate = self._combo()
-        for value in VALID_BITRATES:
-            self.bitrate.addItem(str(value), str(value))
-        synth_lay.addWidget(self._row("比特率", self.bitrate))
-
-        self.channel = self._combo()
-        self.channel.addItem("单声道", "1")
-        self.channel.addItem("双声道", "2")
-        synth_lay.addWidget(self._row("声道", self.channel))
-
-        self.speed = self._double_spin()
-        self.speed.setRange(0.5, 2.0)
-        self.speed.setSingleStep(0.05)
-        self.speed.setValue(1.0)
-        synth_lay.addWidget(self._row("语速", self.speed))
-
-        self.vol = self._double_spin()
-        self.vol.setRange(0.0, 10.0)
-        self.vol.setSingleStep(0.05)
-        self.vol.setValue(1.0)
-        synth_lay.addWidget(self._row("音量", self.vol))
-
-        self.pitch = self._spin()
-        self.pitch.setRange(-12, 12)
-        synth_lay.addWidget(self._row("音高", self.pitch))
-
-        self.emotion = self._combo()
-        for item in ("", *VALID_EMOTIONS):
-            self.emotion.addItem(item or "不固定", item)
-        synth_lay.addWidget(self._row("默认情绪", self.emotion))
-
-        self.auto_clone = self._checkbox("未找到 voice_id 时，从本地参考音频自动克隆")
-        self.auto_clone.setChecked(False)
-        synth_lay.addWidget(self._check_row(self.auto_clone))
-
-        self.request_timeout = self._spin()
-        self.request_timeout.setRange(5, 600)
-        self.request_timeout.setValue(120)
-        synth_lay.addWidget(self._row("请求超时", self.request_timeout))
-
-        root.addWidget(synth_box)
         root.addStretch(1)
 
         outer.addWidget(scroll, stretch=1)
@@ -367,8 +319,8 @@ class CloudTtsSettingsWidget(QWidget):
             "<b>4. 提示词模板：</b>「默认模板」内置中文、日语、粤语、英语四套母版；每个角色首次打开也会自动生成四套同语种默认提示词。"
             "模板语言下拉框只用于编辑对应语言模板，不决定运行时注入语言；实际注入语言会跟随主程序当前语音语言。"
             "四个语言模板固定，不支持新建或删除；上方文本框可直接修改当前角色对应语言的提示词。<br/><br/>"
-            "<b>5. 合成参数：</b>模型建议选 speech-2.8-hd；语速/音量/音高/情绪可按需微调。"
-            "自动克隆开关：未找到 voice_id 时从本地参考音频自动复刻。"
+            "<b>5. 参考音频语言：</b>在角色语音配置里选择参考音频语言，用于 MiniMax 识别参考音频并创建 voice_id；"
+            "不确定时保持「自动识别 / auto」。"
         )
         body.setWordWrap(True)
         body.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
@@ -423,16 +375,6 @@ class CloudTtsSettingsWidget(QWidget):
         combo.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
         return combo
 
-    def _spin(self) -> QSpinBox:
-        spin = QSpinBox()
-        self._prepare_field(spin)
-        return spin
-
-    def _double_spin(self) -> QDoubleSpinBox:
-        spin = QDoubleSpinBox()
-        self._prepare_field(spin)
-        return spin
-
     def _checkbox(self, text: str) -> QCheckBox:
         checkbox = QCheckBox(text)
         checkbox.setFixedHeight(30)
@@ -441,30 +383,6 @@ class CloudTtsSettingsWidget(QWidget):
 
     def _apply_field_style(self) -> None:
         self.setStyleSheet("")
-
-    def _as_int(self, value: Any, default: int) -> int:
-        try:
-            return int(value)
-        except (TypeError, ValueError):
-            return default
-
-    def _valid_sample_rate(self, value: Any) -> int:
-        try:
-            sample_rate = int(value)
-        except (TypeError, ValueError):
-            return 32000
-        if sample_rate in VALID_SAMPLE_RATES:
-            return sample_rate
-        return 32000
-
-    def _valid_bitrate(self, value: Any) -> int:
-        try:
-            bitrate = int(value)
-        except (TypeError, ValueError):
-            return 128000
-        if bitrate in VALID_BITRATES:
-            return bitrate
-        return 128000
 
     def _valid_choice(self, value: Any, valid: tuple[str, ...], default: str) -> str:
         item = str(value or "").strip()
@@ -475,18 +393,6 @@ class CloudTtsSettingsWidget(QWidget):
             if candidate.lower() == lowered:
                 return candidate
         return default
-
-    def _valid_emotion(self, value: Any) -> str:
-        item = str(value or "").strip()
-        if item == "neutral":
-            item = "calm"
-        return self._valid_choice(item, VALID_EMOTIONS, "") if item else ""
-
-    def _as_float(self, value: Any, default: float) -> float:
-        try:
-            return float(value)
-        except (TypeError, ValueError):
-            return default
 
     def _as_bool(self, value: Any, default: bool) -> bool:
         if isinstance(value, bool):
@@ -524,39 +430,14 @@ class CloudTtsSettingsWidget(QWidget):
         self._local_reference_audio_map = self._coerce_path_map(
             values.get("local_reference_audio_map")
         )
+        self._reference_audio_language_map = state.coerce_voice_language_map(
+            values.get("reference_audio_language_map")
+        )
         # 角色语音语言选择暂时从配置页移除，避免旧配置在隐藏状态下继续影响合成。
-        self._voice_language_map = {}
         self._ensure_versions_from_selected_map()
         self._refresh_default_voice_options(str(values.get("default_voice_id") or ""))
-        self._set_combo(
-            self.language_boost,
-            self._valid_choice(values.get("language_boost"), VALID_LANGUAGE_BOOSTS, "auto"),
-        )
-        self._set_combo(
-            self.audio_format,
-            self._valid_choice(values.get("audio_format"), VALID_AUDIO_FORMATS, "wav"),
-        )
-        self._set_combo(
-            self.sample_rate,
-            str(self._valid_sample_rate(values.get("sample_rate"))),
-        )
-        self._set_combo(self.bitrate, str(self._valid_bitrate(values.get("bitrate"))))
-        self._set_combo(self.channel, str(values.get("channel") or "1"))
-        self._set_combo(self.emotion, self._valid_emotion(values.get("emotion")))
-        self.speed.setValue(self._as_float(values.get("speed"), 1.0))
-        self.vol.setValue(self._as_float(values.get("vol"), 1.0))
-        self.pitch.setValue(self._as_int(values.get("pitch"), 0))
-        self.auto_clone.setChecked(bool(values.get("auto_clone_from_reference", False)))
         self.prompt_constraint.setChecked(
             self._as_bool(values.get("auto_prompt_constraint"), False)
-        )
-        self.request_timeout.setValue(self._as_int(values.get("request_timeout"), 120))
-        self.need_noise_reduction.setChecked(bool(values.get("need_noise_reduction", False)))
-        self.need_volume_normalization.setChecked(
-            bool(values.get("need_volume_normalization", False))
-        )
-        self.voice_cache_path.setText(
-            str(values.get("voice_cache_path") or "cache/audio/cloud_tts_voice_cache.json")
         )
 
     def _set_combo(self, combo: QComboBox, value: str) -> None:
@@ -631,20 +512,20 @@ class CloudTtsSettingsWidget(QWidget):
         self._set_voice_combo_value(self.character_voice_id, selected)
         self.character_voice_id.blockSignals(False)
 
-    def _refresh_character_voice_language(self, character_name: str) -> None:
-        if not hasattr(self, "character_voice_language"):
+    def _refresh_reference_audio_language(self, character_name: str) -> None:
+        if not hasattr(self, "reference_audio_language"):
             return
-        code = self._voice_language_map.get(character_name, "auto")
-        self.character_voice_language.blockSignals(True)
+        code = self._reference_audio_language_map.get(character_name, "auto")
+        self.reference_audio_language.blockSignals(True)
         self._set_combo(
-            self.character_voice_language,
+            self.reference_audio_language,
             state.normalize_voice_language_code(code),
         )
-        self.character_voice_language.blockSignals(False)
+        self.reference_audio_language.blockSignals(False)
 
     def _reload_characters(self) -> None:
         self._store_current_local_reference_audio()
-        self._store_current_voice_language()
+        self._store_current_reference_audio_language()
         current = self.character_combo.currentText()
         self._characters = state.load_characters()
         self.character_combo.blockSignals(True)
@@ -676,11 +557,11 @@ class CloudTtsSettingsWidget(QWidget):
         self.local_ref_path.setText(self._local_reference_audio_map.get(name, ""))
         self.local_ref_path.blockSignals(False)
         self._refresh_character_voice_options(name)
-        self._refresh_character_voice_language(name)
+        self._refresh_reference_audio_language(name)
 
     def _on_character_changed(self, _index: int) -> None:
         self._store_local_reference_audio_for_name(self._current_voice_character_name)
-        self._store_voice_language_for_name(self._current_voice_character_name)
+        self._store_reference_audio_language_for_name(self._current_voice_character_name)
         self._current_voice_character_name = self.character_combo.currentText().strip()
         self._sync_reference_label()
 
@@ -740,20 +621,28 @@ class CloudTtsSettingsWidget(QWidget):
         else:
             self._local_reference_audio_map.pop(name, None)
 
-    def _store_current_voice_language(self) -> None:
-        self._store_voice_language_for_name(self.character_combo.currentText().strip())
+    def _store_current_reference_audio_language(self) -> None:
+        self._store_reference_audio_language_for_name(self.character_combo.currentText().strip())
 
-    def _store_voice_language_for_name(self, character_name: str) -> None:
+    def _store_reference_audio_language_for_name(self, character_name: str) -> None:
         name = (character_name or "").strip()
-        if not name or not hasattr(self, "character_voice_language"):
+        if not name or not hasattr(self, "reference_audio_language"):
             return
         code = state.normalize_voice_language_code(
-            self.character_voice_language.currentData()
+            self.reference_audio_language.currentData()
         )
         if code == "auto":
-            self._voice_language_map.pop(name, None)
+            self._reference_audio_language_map.pop(name, None)
         else:
-            self._voice_language_map[name] = code
+            self._reference_audio_language_map[name] = code
+
+    def _reference_audio_language_for_name(self, character_name: str) -> str:
+        name = (character_name or "").strip()
+        if not name:
+            return "auto"
+        return state.normalize_voice_language_code(
+            self._reference_audio_language_map.get(name, "auto")
+        )
 
     def _reference_audio_for_upload(self, char: dict[str, Any]) -> tuple[Path | None, str]:
         name = str(char.get("name") or "").strip()
@@ -878,32 +767,15 @@ class CloudTtsSettingsWidget(QWidget):
     def _values(self) -> dict[str, Any]:
         self._store_current_character_voice_id()
         self._store_current_local_reference_audio()
-        self._store_current_voice_language()
+        self._store_current_reference_audio_language()
         return {
             "model": str(self.model.currentData() or "speech-2.8-hd"),
             "default_voice_id": self._combo_voice_id(self.default_voice_id),
             "voice_id_map": dict(self._voice_id_map),
             "voice_id_versions": dict(self._voice_id_versions),
             "local_reference_audio_map": dict(self._local_reference_audio_map),
-            "voice_language_map": {},
-            "language_boost": str(self.language_boost.currentData() or "auto"),
-            "audio_format": str(self.audio_format.currentData() or "wav"),
-            "sample_rate": int(self.sample_rate.currentData() or 32000),
-            "bitrate": int(self.bitrate.currentData() or 128000),
-            "channel": int(self.channel.currentData() or 1),
-            "speed": float(self.speed.value()),
-            "vol": float(self.vol.value()),
-            "pitch": int(self.pitch.value()),
-            "emotion": str(self.emotion.currentData() or ""),
-            "auto_clone_from_reference": self.auto_clone.isChecked(),
+            "reference_audio_language_map": dict(self._reference_audio_language_map),
             "auto_prompt_constraint": self.prompt_constraint.isChecked(),
-            "request_timeout": int(self.request_timeout.value()),
-            "need_noise_reduction": self.need_noise_reduction.isChecked(),
-            "need_volume_normalization": self.need_volume_normalization.isChecked(),
-            "voice_cache_path": (
-                self.voice_cache_path.text().strip()
-                or "cache/audio/cloud_tts_voice_cache.json"
-            ),
         }
 
     def _adapter(self) -> CloudTTSAdapter:
@@ -1354,6 +1226,7 @@ class CloudTtsSettingsWidget(QWidget):
             QMessageBox.warning(self, "Cloud TTS", "没有选中的角色。")
             return
         self._store_current_local_reference_audio()
+        self._store_current_reference_audio_language()
         path, source_label = self._reference_audio_for_upload(char)
         if not path or not path.is_file():
             QMessageBox.warning(self, "Cloud TTS", "请先选择一个存在的本地参考音频。")
@@ -1368,6 +1241,9 @@ class CloudTtsSettingsWidget(QWidget):
                 path,
                 character_name=str(char.get("name") or ""),
                 prompt_text=str(char.get("prompt_text") or ""),
+                reference_audio_language=self._reference_audio_language_for_name(
+                    str(char.get("name") or "")
+                ),
             )
         except Exception as exc:
             self.status.setText(f"上传失败：{exc}")
@@ -1382,6 +1258,7 @@ class CloudTtsSettingsWidget(QWidget):
                     model=str(self.model.currentData() or ""),
                     reference_audio_path=str(path),
                     reference_audio_source=source_label,
+                    reference_audio_language=self._reference_audio_language_for_name(name),
                 )
                 self._voice_id_map[name] = voice_id
                 self._refresh_character_voice_options(name)
