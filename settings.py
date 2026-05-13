@@ -200,11 +200,13 @@ class CloudTtsSettingsWidget(QWidget):
         self.constraint_version_combo = self._combo()
         self.constraint_version_combo.setMinimumContentsLength(20)
         self.constraint_version_combo.currentIndexChanged.connect(self._on_constraint_version_changed)
-        template_lay.addWidget(self._row("约束版本", self.constraint_version_combo))
+        template_lay.addWidget(self._row("模板语言", self.constraint_version_combo))
 
         self.version_name_edit = self._line_edit("")
         self.version_name_edit.setPlaceholderText("版本名称，如「默认模板」「优化版」")
-        template_lay.addWidget(self._row("版本名称", self.version_name_edit))
+        self.version_name_row = self._row("版本名称", self.version_name_edit)
+        self.version_name_row.setVisible(False)
+        template_lay.addWidget(self.version_name_row)
 
         self.constraint_text_edit = QTextEdit()
         self.constraint_text_edit.setMinimumHeight(200)
@@ -227,9 +229,9 @@ class CloudTtsSettingsWidget(QWidget):
         self.reset_default_btn = QPushButton("重置默认模板")
         self.reset_default_btn.setFixedHeight(FIELD_HEIGHT)
         self.reset_default_btn.clicked.connect(self._reset_default_template)
-        template_actions_lay.addWidget(self.new_version_btn)
+        self.new_version_btn.setVisible(False)
+        self.delete_version_btn.setVisible(False)
         template_actions_lay.addWidget(self.save_version_btn)
-        template_actions_lay.addWidget(self.delete_version_btn)
         template_actions_lay.addWidget(self.reset_default_btn)
         template_lay.addWidget(template_actions)
         root.addWidget(template_box)
@@ -362,8 +364,8 @@ class CloudTtsSettingsWidget(QWidget):
             "也可选择本地参考音频后上传克隆 voice_id，绕开主程序参考音频时长限制；"
             "结果缓存在 <code>data/plugins/com.shinsekai.cloud_tts/voices/</code>。<br/><br/>"
             "<b>4. 提示词模板：</b>「默认模板」内置中文、日语、粤语、英语四套母版；每个角色首次打开也会自动生成四套同语种默认提示词。"
-            "先在角色下拉框选择角色，再在约束版本里选择要使用的语言模板；上方文本框可直接修改当前角色的提示词。"
-            "保存角色版本后会变为该角色自己的手改版；保存默认模板时只同步同语种、且仍跟随母版的角色版本。<br/><br/>"
+            "模板语言下拉框只用于编辑对应语言模板，不决定运行时注入语言；实际注入语言会跟随主程序当前语音语言。"
+            "四个语言模板固定，不支持新建或删除；上方文本框可直接修改当前角色对应语言的提示词。<br/><br/>"
             "<b>5. 合成参数：</b>模型建议选 speech-2.8-hd；语速/音量/音高/情绪可按需微调。"
             "自动克隆开关：未找到 voice_id 时从本地参考音频自动复刻。"
         )
@@ -1139,13 +1141,15 @@ class CloudTtsSettingsWidget(QWidget):
 
         store = state.load_character_constraints(name)
         selected_vid = store.get("selected_version")
+        allowed_vids = set(state.DEFAULT_PROMPT_VERSION_IDS.values())
+        if selected_vid not in allowed_vids:
+            selected_vid = state._default_prompt_version_id(state.current_system_voice_language())
 
-        for vid, vdata in sorted(
-            store["versions"].items(),
-            key=state._constraint_version_sort_key,
-        ):
+        for code, language_name in state.PROMPT_LANGUAGE_OPTIONS:
+            vid = state.DEFAULT_PROMPT_VERSION_IDS[code]
+            vdata = store["versions"].get(vid, {})
             version_name = str(vdata.get("name", "")).strip()
-            label = f"{vid} / {version_name}" if version_name else vid
+            label = f"{language_name} / {version_name}" if version_name else language_name
             self.constraint_version_combo.addItem(label, vid)
 
         if selected_vid:
@@ -1161,8 +1165,8 @@ class CloudTtsSettingsWidget(QWidget):
     def _update_default_template_buttons(self) -> None:
         """默认模板角色仅允许保存和重置，不允许新建/删除版本."""
         is_default = self.template_character_combo.currentText().strip() == "默认模板"
-        self.new_version_btn.setEnabled(not is_default)
-        self.delete_version_btn.setEnabled(not is_default)
+        self.new_version_btn.setEnabled(False)
+        self.delete_version_btn.setEnabled(False)
         self.reset_default_btn.setEnabled(is_default)
 
     def _on_constraint_version_changed(self, *, store: dict | None = None) -> None:
@@ -1228,7 +1232,7 @@ class CloudTtsSettingsWidget(QWidget):
         name = self.template_character_combo.currentText().strip()
         vid = self.constraint_version_combo.currentData()
         if not name or not vid:
-            QMessageBox.warning(self, "Cloud TTS", "请先选择角色和版本。")
+            QMessageBox.warning(self, "Cloud TTS", "请先选择角色和模板语言。")
             return
 
         text = self.constraint_text_edit.toPlainText().strip()
@@ -1267,7 +1271,7 @@ class CloudTtsSettingsWidget(QWidget):
                 language=language,
             )
             self._refresh_constraint_version_combo()
-            self.status.setText(f"已保存 {name} 的约束版本 {vid}。")
+            self.status.setText(f"已保存 {name} 的模板语言 {vid}。")
 
     def _delete_constraint_version(self) -> None:
         """删除当前选中的约束版本（至少保留一个）."""

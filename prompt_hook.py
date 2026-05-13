@@ -142,10 +142,10 @@ def _sync_template_session_file(template_tab: Any, provider: str | None) -> None
 
 
 def _get_character_constraint_text(character_name: str) -> str | None:
-    """Get currently selected constraint text for a character from per-character versioned system."""
+    """Get runtime-language constraint text for a character."""
     return state.get_character_constraint_text(
         character_name,
-        state.voice_language_for_character(character_name),
+        state.current_system_voice_language(),
     )
 
 
@@ -165,7 +165,7 @@ def _sync_template_text(
         return old
 
     # Collect constraint texts from all selected characters.
-    # 不同角色可以有不同语音语言，因此这里合并为一个标记块，而不是直接放弃注入。
+    # 注入语言跟随主程序当前语音语言；不同角色仍可维护各自的同语种模板。
     constraint_texts: list[str] = []
     for name in selected_characters:
         ct = _get_character_constraint_text(name)

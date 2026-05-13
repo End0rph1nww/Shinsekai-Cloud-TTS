@@ -14,7 +14,7 @@ import yaml
 PROVIDER_SLUG = "minimax-tts"
 PLUGIN_ID = "com.shinsekai.cloud_tts"
 PLUGIN_ENTRY = "plugins.cloud_tts.plugin:CloudTtsPlugin"
-PLUGIN_VERSION = "0.9.2"
+PLUGIN_VERSION = "0.9.3"
 
 LEGACY_PROVIDER_SLUG = "cloud-tts"
 LEGACY_PLUGIN_ID = "com.shinsekai.minimax_tts"
@@ -319,6 +319,15 @@ def _default_prompt_version_id(language: Any) -> str:
     return DEFAULT_PROMPT_VERSION_IDS[code]
 
 
+def _runtime_prompt_language(language: Any = "auto") -> str:
+    """Resolve the prompt language from the main program state."""
+    return (
+        _normalize_prompt_language(language)
+        or _normalize_prompt_language(current_system_voice_language())
+        or DEFAULT_PROMPT_LANGUAGE
+    )
+
+
 def _prompt_language_from_version_id(version_id: str | None) -> str | None:
     for code, default_vid in DEFAULT_PROMPT_VERSION_IDS.items():
         if version_id == default_vid:
@@ -327,8 +336,7 @@ def _prompt_language_from_version_id(version_id: str | None) -> str | None:
 
 
 def _preferred_prompt_language(character_name: str) -> str:
-    code = _normalize_prompt_language(voice_language_for_character(character_name))
-    return code or DEFAULT_PROMPT_LANGUAGE
+    return _runtime_prompt_language()
 
 
 def _default_prompt_version_record(language: str, *, created_at: int | None = None) -> dict[str, Any]:
@@ -635,24 +643,38 @@ def get_character_constraint_record(character_name: str) -> dict[str, Any] | Non
     return dict(record) if isinstance(record, dict) else None
 
 
+def get_character_constraint_record_for_language(
+    character_name: str,
+    voice_language: Any = "auto",
+) -> dict[str, Any] | None:
+    """
+    Get the constraint record for the runtime prompt language.
+    UI selection is only for editing and does not affect injection language.
+    """
+    store = load_character_constraints(character_name)
+    language = _runtime_prompt_language(voice_language)
+    version_id = DEFAULT_PROMPT_VERSION_IDS[language]
+    record = store.get("versions", {}).get(version_id)
+    return dict(record) if isinstance(record, dict) else None
+
+
 def get_character_constraint_text(
     character_name: str,
     voice_language: Any = "auto",
 ) -> str | None:
     """
-    Get the currently selected constraint text for a character.
-    The selected version decides the prompt language; legacy records without text
-    still fall back to the requested voice language.
+    Get the constraint text matching the main program's current voice language.
+    The settings-page language dropdown is only an editor selector.
     """
-    record = get_character_constraint_record(character_name)
+    language = _runtime_prompt_language(voice_language)
+    record = get_character_constraint_record_for_language(character_name, language)
     if not record:
-        return None
+        return build_default_constraint_text(language)
     text = record.get("constraint_text")
     if text:
         return str(text)
-    language = _normalize_prompt_language(record.get("language")) or _normalize_prompt_language(voice_language)
     if record.get("source") == "default":
-        return build_default_constraint_text(language or DEFAULT_PROMPT_LANGUAGE)
+        return build_default_constraint_text(language)
     return None
 
 
