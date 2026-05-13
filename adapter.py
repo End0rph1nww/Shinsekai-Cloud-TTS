@@ -223,7 +223,7 @@ class CloudTTSAdapter(TTSAdapter):
         if not self.api_key:
             self._log(
                 "\u5408\u6210\u5931\u8d25\uff1aAPI KEY \u4e3a\u7a7a\uff0c"
-                "\u8bf7\u5148\u5728\u63d2\u4ef6\u8bbe\u7f6e\u9875\u586b\u5199\u3002"
+                "\u8bf7\u5148\u5728\u4e3b\u83dc\u5355 API \u8bbe\u7f6e\u9875\u586b\u5199 MiniMax API KEY \u5e76\u4fdd\u5b58\u3002"
             )
             return None
         text_value = str(text or "")
