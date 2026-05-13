@@ -103,7 +103,6 @@ class CloudTtsSettingsWidget(QWidget):
             "<b>重要：</b>上传参考音频前请按 MiniMax 官方要求准备源音频："
             "<b>mp3 / m4a / wav</b>，<b>10 秒 - 5 分钟</b>，<b>20MB 以内</b>。"
             "建议使用干净人声、少背景噪音、少混响的单人台词。"
-            "可选示例音频要求更短：<b>小于 8 秒</b>。"
         )
         voice_note.setWordWrap(True)
         voice_note.setTextFormat(Qt.TextFormat.RichText)

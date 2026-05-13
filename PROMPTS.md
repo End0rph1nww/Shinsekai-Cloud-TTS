@@ -1,6 +1,6 @@
 # Cloud TTS 提示词预览
 
-本文档整理 Cloud TTS 插件当前内置的默认提示词约束，来源于 `state.py` 中的 `build_default_constraint_text()` 逻辑。当前插件版本为 `0.9.1`。
+本文档整理 Cloud TTS 插件当前内置的默认提示词约束，来源于 `state.py` 中的 `build_default_constraint_text()` 逻辑。当前插件版本为 `0.9.2`。
 
 从 `0.9.0` 开始，「默认模板」和每个角色都会拥有中文、日语、粤语、英语四套默认提示词版本；配置页里选中的版本就是实际注入给模型的提示词。
 
