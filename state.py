@@ -14,7 +14,7 @@ import yaml
 PROVIDER_SLUG = "minimax-tts"
 PLUGIN_ID = "com.shinsekai.cloud_tts"
 PLUGIN_ENTRY = "plugins.cloud_tts.plugin:CloudTtsPlugin"
-PLUGIN_VERSION = "0.8.2"
+PLUGIN_VERSION = "0.9.0"
 
 LEGACY_PROVIDER_SLUG = "cloud-tts"
 LEGACY_PLUGIN_ID = "com.shinsekai.minimax_tts"
@@ -86,6 +86,21 @@ VOICE_LANGUAGE_OPTIONS = (
     ("en", "英语"),
 )
 VALID_VOICE_LANGUAGES = tuple(code for code, _label in VOICE_LANGUAGE_OPTIONS)
+
+PROMPT_LANGUAGE_OPTIONS = (
+    ("zh", "中文"),
+    ("ja", "日语"),
+    ("yue", "粤语"),
+    ("en", "英语"),
+)
+PROMPT_LANGUAGE_CODES = tuple(code for code, _label in PROMPT_LANGUAGE_OPTIONS)
+DEFAULT_PROMPT_LANGUAGE = "zh"
+DEFAULT_PROMPT_VERSION_IDS = {
+    "zh": "default_zh",
+    "ja": "default_ja",
+    "yue": "default_yue",
+    "en": "default_en",
+}
 
 
 # ----------------------------------------------------------------------
@@ -279,30 +294,169 @@ def build_default_constraint_text(voice_language: Any = "auto") -> str:
 
 def _get_hardcoded_constraints() -> dict[str, str]:
     """Return hardcoded default constraints for migration fallback."""
-    return {"default": build_default_constraint_text("auto")}
+    data = {
+        "default": build_default_constraint_text("auto"),
+        "auto": build_default_constraint_text("auto"),
+    }
+    for code in PROMPT_LANGUAGE_CODES:
+        data[code] = build_default_constraint_text(code)
+    return data
 
 
-def get_default_template_text() -> str:
+def _prompt_language_label(language: Any) -> str:
+    code = normalize_voice_language_code(language)
+    labels = dict(PROMPT_LANGUAGE_OPTIONS)
+    return labels.get(code, labels[DEFAULT_PROMPT_LANGUAGE])
+
+
+def _normalize_prompt_language(language: Any) -> str | None:
+    code = normalize_voice_language_code(language)
+    return code if code in PROMPT_LANGUAGE_CODES else None
+
+
+def _default_prompt_version_id(language: Any) -> str:
+    code = _normalize_prompt_language(language) or DEFAULT_PROMPT_LANGUAGE
+    return DEFAULT_PROMPT_VERSION_IDS[code]
+
+
+def _prompt_language_from_version_id(version_id: str | None) -> str | None:
+    for code, default_vid in DEFAULT_PROMPT_VERSION_IDS.items():
+        if version_id == default_vid:
+            return code
+    return None
+
+
+def _preferred_prompt_language(character_name: str) -> str:
+    code = _normalize_prompt_language(voice_language_for_character(character_name))
+    return code or DEFAULT_PROMPT_LANGUAGE
+
+
+def _default_prompt_version_record(language: str, *, created_at: int | None = None) -> dict[str, Any]:
+    code = _normalize_prompt_language(language) or DEFAULT_PROMPT_LANGUAGE
+    order = PROMPT_LANGUAGE_CODES.index(code) + 1
+    label = _prompt_language_label(code)
+    return {
+        "name": f"{label}默认提示词",
+        "constraint_text": build_default_constraint_text(code),
+        "created_at": created_at if created_at is not None else int(time.time()),
+        "source": "default",
+        "language": code,
+        "sort_order": order * 10,
+    }
+
+
+def _constraint_version_sort_key(item: tuple[str, dict[str, Any]]) -> tuple[int, int, str]:
+    vid, vdata = item
+    if isinstance(vdata, dict) and vdata.get("sort_order") is not None:
+        try:
+            return (0, int(vdata.get("sort_order")), vid)
+        except (TypeError, ValueError):
+            pass
+    created_at = 0
+    if isinstance(vdata, dict):
+        try:
+            created_at = int(vdata.get("created_at", 0))
+        except (TypeError, ValueError):
+            created_at = 0
+    return (1, created_at, vid)
+
+
+def ensure_default_prompt_versions(store: dict[str, Any]) -> bool:
+    """
+    Ensure each character has four built-in prompt versions: zh/ja/yue/en.
+    Returns True when the store was changed and should be saved.
+    """
+    changed = False
+    character_name = str(store.get("character_name") or "")
+    versions = store.get("versions")
+    if not isinstance(versions, dict):
+        versions = {}
+        store["versions"] = versions
+        changed = True
+
+    # Migrate the old one-version default store into the four-language layout.
+    legacy_v1 = versions.get("v1")
+    legacy_custom_text = None
+    legacy_custom_name = None
+    if (
+        len(versions) == 1
+        and isinstance(legacy_v1, dict)
+        and legacy_v1.get("source") == "default"
+        and not _normalize_prompt_language(legacy_v1.get("language"))
+    ):
+        text = str(legacy_v1.get("constraint_text") or "")
+        if text and text != build_default_constraint_text("auto"):
+            legacy_custom_text = text
+            legacy_custom_name = str(legacy_v1.get("name") or "")
+        versions.clear()
+        store["selected_version"] = None
+        changed = True
+
+    now = int(time.time())
+    for index, code in enumerate(PROMPT_LANGUAGE_CODES):
+        vid = DEFAULT_PROMPT_VERSION_IDS[code]
+        record = versions.get(vid)
+        if not isinstance(record, dict):
+            versions[vid] = _default_prompt_version_record(code, created_at=now + index)
+            changed = True
+            continue
+        default_record = _default_prompt_version_record(code, created_at=record.get("created_at", now + index))
+        for key in ("name", "constraint_text", "source", "language", "sort_order"):
+            if not record.get(key):
+                record[key] = default_record[key]
+                changed = True
+        if _normalize_prompt_language(record.get("language")) != code:
+            record["language"] = code
+            changed = True
+
+    if legacy_custom_text:
+        zh_record = versions.get(DEFAULT_PROMPT_VERSION_IDS[DEFAULT_PROMPT_LANGUAGE])
+        if isinstance(zh_record, dict):
+            zh_record["constraint_text"] = legacy_custom_text
+            if legacy_custom_name:
+                zh_record["name"] = legacy_custom_name
+            changed = True
+
+    preferred_vid = _default_prompt_version_id(_preferred_prompt_language(character_name))
+    selected = store.get("selected_version")
+    if not selected or selected not in versions:
+        store["selected_version"] = preferred_vid if preferred_vid in versions else next(iter(versions), None)
+        changed = True
+
+    # Legacy source="default" versions without language should not stay ambiguous.
+    preferred_language = _preferred_prompt_language(character_name)
+    for vid, record in versions.items():
+        if not isinstance(record, dict):
+            continue
+        if record.get("source") == "default" and not _normalize_prompt_language(record.get("language")):
+            record["language"] = _prompt_language_from_version_id(vid) or preferred_language
+            changed = True
+
+    return changed
+
+
+def get_default_template_text(language: Any = DEFAULT_PROMPT_LANGUAGE) -> str:
     """
     获取当前默认模板文本。
-    优先从「默认模板」角色的约束文件读取 v1 内容，
-    若文件不存在则回退到硬编码默认模板。
+    优先读取「默认模板」角色里对应语言的母版，缺失时回退到内置默认模板。
     """
     store = load_character_constraints("默认模板")
     versions = store.get("versions", {})
-    if versions:
-        first_vid = next(iter(versions.keys()))
-        text = versions[first_vid].get("constraint_text", "")
-        if text:
-            return text
-    return _get_hardcoded_constraints().get("default", "")
+    code = _normalize_prompt_language(language) or DEFAULT_PROMPT_LANGUAGE
+    vid = DEFAULT_PROMPT_VERSION_IDS[code]
+    record = versions.get(vid)
+    if isinstance(record, dict) and record.get("constraint_text"):
+        return str(record.get("constraint_text"))
+    return build_default_constraint_text(code)
 
 
-def propagate_default_template(new_text: str) -> int:
+def propagate_default_template(new_text: str, language: Any | None = None) -> int:
     """
     将默认模板内容同步到所有标记为 source='default' 的角色版本。
+    指定 language 时只同步同语种版本，避免中文母版覆盖日语/粤语/英语母版。
     返回同步的角色数量。
     """
+    target_language = _normalize_prompt_language(language) if language is not None else None
     count = 0
     root = prompt_constraints_root()
     if not root.is_dir():
@@ -322,9 +476,12 @@ def propagate_default_template(new_text: str) -> int:
         for vid, vdata in versions.items():
             if not isinstance(vdata, dict):
                 continue
-            if vdata.get("source") == "default":
+            record_language = _normalize_prompt_language(vdata.get("language"))
+            if vdata.get("source") == "default" and (target_language is None or record_language == target_language):
                 vdata["constraint_text"] = new_text
                 vdata["created_at"] = int(time.time())
+                if target_language:
+                    vdata["language"] = target_language
                 updated = True
         if updated:
             raw["updated_at"] = int(time.time())
@@ -336,28 +493,21 @@ def propagate_default_template(new_text: str) -> int:
 def load_character_constraints(character_name: str) -> dict[str, Any]:
     """
     Load constraint store for a specific character.
-    Auto-creates a default 'v1' version if no file exists.
+    Auto-creates four language-specific default versions if missing.
     """
     path = constraint_file_path(character_name)
     if path.is_file():
         try:
             raw = json.loads(path.read_text(encoding="utf-8"))
             if isinstance(raw, dict) and raw.get("character_name"):
+                if ensure_default_prompt_versions(raw):
+                    save_character_constraints(raw)
                 return raw
         except Exception:
             pass
-    # 文件不存在则自动用默认模板初始化
-    default_text = _get_hardcoded_constraints().get("default", "")
     store = _default_constraint_store(character_name)
-    if default_text:
-        store["versions"]["v1"] = {
-            "name": "默认模板",
-            "constraint_text": default_text,
-            "created_at": int(time.time()),
-            "source": "default",
-        }
-        store["selected_version"] = "v1"
-        save_character_constraints(store)
+    ensure_default_prompt_versions(store)
+    save_character_constraints(store)
     return store
 
 
@@ -388,6 +538,7 @@ def upsert_constraint_version(
     *,
     name: str = "",
     source: str = "manual",
+    language: Any | None = None,
 ) -> tuple[dict[str, Any], str]:
     """
     添加或更新角色的约束版本。
@@ -398,6 +549,7 @@ def upsert_constraint_version(
         constraint_text: 完整约束文本（含标记）
         name: 版本名称（用户自定义）
         source: 版本来源（"manual", "imported", "migrated"）
+        language: 该版本适配的语音语言（zh/ja/yue/en）
 
     Returns:
         (更新后的 store, 实际使用的 version_id)
@@ -408,12 +560,30 @@ def upsert_constraint_version(
         existing = set(store["versions"].keys())
         version_id = _next_version_id(existing)
 
-    store["versions"][version_id] = {
+    old_record = store["versions"].get(version_id)
+    old_language = None
+    if isinstance(old_record, dict):
+        old_language = _normalize_prompt_language(old_record.get("language"))
+    record_language = (
+        _normalize_prompt_language(language)
+        or old_language
+        or _prompt_language_from_version_id(version_id)
+    )
+
+    record = {
         "name": name or "",
         "constraint_text": constraint_text,
         "created_at": int(time.time()),
         "source": source,
     }
+    if record_language:
+        record["language"] = record_language
+    if isinstance(old_record, dict) and old_record.get("sort_order") is not None:
+        record["sort_order"] = old_record.get("sort_order")
+    elif record_language and version_id == DEFAULT_PROMPT_VERSION_IDS.get(record_language):
+        record["sort_order"] = (PROMPT_LANGUAGE_CODES.index(record_language) + 1) * 10
+
+    store["versions"][version_id] = record
 
     if store["selected_version"] is None or store["selected_version"] not in store["versions"]:
         store["selected_version"] = version_id
@@ -471,14 +641,19 @@ def get_character_constraint_text(
 ) -> str | None:
     """
     Get the currently selected constraint text for a character.
-    Default-source constraints are adapted at injection time to the character voice language.
+    The selected version decides the prompt language; legacy records without text
+    still fall back to the requested voice language.
     """
     record = get_character_constraint_record(character_name)
     if not record:
         return None
+    text = record.get("constraint_text")
+    if text:
+        return str(text)
+    language = _normalize_prompt_language(record.get("language")) or _normalize_prompt_language(voice_language)
     if record.get("source") == "default":
-        return build_default_constraint_text(voice_language)
-    return record.get("constraint_text")
+        return build_default_constraint_text(language or DEFAULT_PROMPT_LANGUAGE)
+    return None
 
 
 def list_constraint_versions(character_name: str) -> list[tuple[str, dict[str, Any]]]:
@@ -486,7 +661,7 @@ def list_constraint_versions(character_name: str) -> list[tuple[str, dict[str, A
     store = load_character_constraints(character_name)
     return sorted(
         [(vid, dict(vdata)) for vid, vdata in store["versions"].items()],
-        key=lambda x: x[1].get("created_at", 0)
+        key=_constraint_version_sort_key,
     )
 
 

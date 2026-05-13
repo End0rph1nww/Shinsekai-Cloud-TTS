@@ -350,9 +350,9 @@ class CloudTtsSettingsWidget(QWidget):
             "<b>3. 角色 voice_id：</b>选择角色后在下拉框中选择或粘贴 voice_id，支持多版本历史管理。"
             "也可选择本地参考音频后上传克隆 voice_id，绕开主程序参考音频时长限制；"
             "结果缓存在 <code>data/plugins/com.shinsekai.cloud_tts/voices/</code>。<br/><br/>"
-            "<b>4. 提示词模板：</b>选择角色后可管理约束版本（v1 / v2 …），每个版本可自定义名称和内容。"
-            "「默认模板」角色是母版——修改保存后，所有标记为跟随母版的角色版本会自动同步更新。"
-            "新建版本以默认模板为基底。手动保存某个角色版本后，该版本脱离母版不再自动同步。<br/><br/>"
+            "<b>4. 提示词模板：</b>「默认模板」内置中文、日语、粤语、英语四套母版；每个角色首次打开也会自动生成四套同语种默认提示词。"
+            "先在角色下拉框选择角色，再在约束版本里选择要使用的语言模板；上方文本框可直接修改当前角色的提示词。"
+            "保存角色版本后会变为该角色自己的手改版；保存默认模板时只同步同语种、且仍跟随母版的角色版本。<br/><br/>"
             "<b>5. 合成参数：</b>模型建议选 speech-2.8-hd；语速/音量/音高/情绪可按需微调。"
             "自动克隆开关：未找到 voice_id 时从角色参考音频自动复刻。"
         )
@@ -1123,7 +1123,7 @@ class CloudTtsSettingsWidget(QWidget):
 
         for vid, vdata in sorted(
             store["versions"].items(),
-            key=lambda x: x[1].get("created_at", 0),
+            key=state._constraint_version_sort_key,
         ):
             version_name = str(vdata.get("name", "")).strip()
             label = f"{vid} / {version_name}" if version_name else vid
@@ -1178,13 +1178,29 @@ class CloudTtsSettingsWidget(QWidget):
             return
 
         # 从默认模板角色文件读取当前内容，确保随母版同步更新
-        default_text = state.get_default_template_text()
+        store = state.load_character_constraints(name)
+        current_vid = self.constraint_version_combo.currentData()
+        current_version = store.get("versions", {}).get(current_vid, {})
+        language = current_version.get("language") if isinstance(current_version, dict) else None
+        language = state._normalize_prompt_language(language) or state._prompt_language_from_version_id(current_vid)
+        default_text = ""
+        if isinstance(current_version, dict):
+            default_text = str(current_version.get("constraint_text") or "")
+        if not default_text:
+            default_text = state.get_default_template_text(language)
 
         version_name = self.version_name_edit.text().strip()
         if not version_name:
             version_name = "新版本"
         # 新建版本默认跟随母版同步（source="default"）
-        state.upsert_constraint_version(name, None, default_text, name=version_name, source="default")
+        state.upsert_constraint_version(
+            name,
+            None,
+            default_text,
+            name=version_name,
+            source="manual",
+            language=language,
+        )
         self._refresh_constraint_version_combo()
         self.status.setText(f"已为 {name} 创建新约束版本。")
 
@@ -1202,17 +1218,35 @@ class CloudTtsSettingsWidget(QWidget):
             return
 
         version_name = self.version_name_edit.text().strip()
+        store = state.load_character_constraints(name)
+        old_version = store.get("versions", {}).get(vid, {})
+        language = old_version.get("language") if isinstance(old_version, dict) else None
+        language = state._normalize_prompt_language(language) or state._prompt_language_from_version_id(vid)
         # 默认模板：保存后全局同步所有 source="default" 的角色版本
         if name == "默认模板":
-            state.upsert_constraint_version(name, vid, text, name=version_name, source="default")
-            count = state.propagate_default_template(text)
+            state.upsert_constraint_version(
+                name,
+                vid,
+                text,
+                name=version_name,
+                source="default",
+                language=language,
+            )
+            count = state.propagate_default_template(text, language=language)
             self._refresh_constraint_version_combo()
             self.status.setText(
                 f"已保存默认模板。已同步 {count} 个使用默认模板的角色。"
             )
         else:
             # 手动保存意味着用户自定义，标记为 manual 停止跟随母版同步
-            state.upsert_constraint_version(name, vid, text, name=version_name, source="manual")
+            state.upsert_constraint_version(
+                name,
+                vid,
+                text,
+                name=version_name,
+                source="manual",
+                language=language,
+            )
             self._refresh_constraint_version_combo()
             self.status.setText(f"已保存 {name} 的约束版本 {vid}。")
 
@@ -1250,20 +1284,35 @@ class CloudTtsSettingsWidget(QWidget):
         if name != "默认模板":
             return
 
-        from plugins.cloud_tts.state import _get_hardcoded_constraints
-        default_text = _get_hardcoded_constraints().get("default", "")
+        vid = self.constraint_version_combo.currentData()
+        if not vid:
+            QMessageBox.warning(self, "Cloud TTS", "请先选择要重置的默认模板版本。")
+            return
+        store = state.load_character_constraints(name)
+        version = store.get("versions", {}).get(vid, {})
+        language = version.get("language") if isinstance(version, dict) else None
+        language = state._normalize_prompt_language(language) or state._prompt_language_from_version_id(vid)
+        default_text = state.build_default_constraint_text(language)
 
         reply = QMessageBox.question(
             self, "Cloud TTS",
-            "确认将默认模板重置为原始硬编码内容？\n此操作会同步更新所有跟随母版的角色版本。",
+            "确认将当前默认模板重置为原始硬编码内容？\n此操作只会同步更新同语种、且仍跟随母版的角色版本。",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
         )
         if reply != QMessageBox.StandardButton.Yes:
             return
 
-        state.upsert_constraint_version(name, "v1", default_text, name="默认模板", source="default")
-        count = state.propagate_default_template(default_text)
+        version_name = self.version_name_edit.text().strip()
+        state.upsert_constraint_version(
+            name,
+            vid,
+            default_text,
+            name=version_name,
+            source="default",
+            language=language,
+        )
+        count = state.propagate_default_template(default_text, language=language)
         self._refresh_constraint_version_combo()
         self.status.setText(
             f"已重置默认模板为原始内容。已同步 {count} 个使用默认模板的角色。"
