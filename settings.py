@@ -67,15 +67,15 @@ class MinimaxTtsSettingsWidget(QWidget):
 
         root.addWidget(self._guide_block())
 
-       开关_box, 开关_lay = self._section("功能开关")
+        switch_box, switch_lay = self._section("功能开关")
         self.paragraph_split = self._checkbox("Paragraph：按段落整段生成（不按标点切分）")
         self.paragraph_split.setChecked(True)
-        开关_lay.addWidget(self._check_row(self.paragraph_split))
+        switch_lay.addWidget(self._check_row(self.paragraph_split))
 
         self.prompt_constraint = self._checkbox("提示词约束：注入 MiniMax 语气标签指令（关闭则不注入）")
         self.prompt_constraint.setChecked(False)
-        开关_lay.addWidget(self._check_row(self.prompt_constraint))
-        root.addWidget(开关_box)
+        switch_lay.addWidget(self._check_row(self.prompt_constraint))
+        root.addWidget(switch_box)
 
         api_box, api_lay = self._section("模型与兜底声线")
         self.model = self._combo()
