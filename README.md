@@ -7,7 +7,7 @@ MiniMax speech-2.x 语音合成插件。它会向 Shinsekai 注册一个新的 T
 | 字段 | 内容 |
 | --- | --- |
 | 插件 ID | `com.shinsekai.cloud_tts` |
-| 版本 | `0.9.3` |
+| 版本 | `0.9.4` |
 | 作者 | `End0rph1nww` |
 | 插件入口 | `plugins.cloud_tts.plugin:CloudTtsPlugin` |
 | TTS 引擎标识 | `minimax-tts` |

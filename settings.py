@@ -56,6 +56,7 @@ class CloudTtsSettingsWidget(QWidget):
         self._local_reference_audio_map: dict[str, str] = {}
         self._voice_language_map: dict[str, str] = {}
         self._current_voice_character_name = ""
+        self._current_template_character_name = ""
         self._build_ui()
         self._load_values()
         self._reload_characters()
@@ -1137,12 +1138,18 @@ class CloudTtsSettingsWidget(QWidget):
             self.constraint_version_combo.blockSignals(False)
             self.constraint_text_edit.clear()
             self.version_name_edit.clear()
+            self._current_template_character_name = ""
             return
 
+        previous_name = self._current_template_character_name
+        same_character = previous_name == name
+        current_vid = self.constraint_version_combo.currentData() if same_character else None
+        self._current_template_character_name = name
+
         store = state.load_character_constraints(name)
-        selected_vid = store.get("selected_version")
         allowed_vids = set(state.DEFAULT_PROMPT_VERSION_IDS.values())
-        if selected_vid not in allowed_vids:
+        selected_vid = current_vid if current_vid in allowed_vids else None
+        if not selected_vid:
             selected_vid = state._default_prompt_version_id(state.current_system_voice_language())
 
         for code, language_name in state.PROMPT_LANGUAGE_OPTIONS:

@@ -14,7 +14,7 @@ import yaml
 PROVIDER_SLUG = "minimax-tts"
 PLUGIN_ID = "com.shinsekai.cloud_tts"
 PLUGIN_ENTRY = "plugins.cloud_tts.plugin:CloudTtsPlugin"
-PLUGIN_VERSION = "0.9.3"
+PLUGIN_VERSION = "0.9.4"
 
 LEGACY_PROVIDER_SLUG = "cloud-tts"
 LEGACY_PLUGIN_ID = "com.shinsekai.minimax_tts"
@@ -654,8 +654,47 @@ def get_character_constraint_record_for_language(
     store = load_character_constraints(character_name)
     language = _runtime_prompt_language(voice_language)
     version_id = DEFAULT_PROMPT_VERSION_IDS[language]
+    custom_record = _find_custom_constraint_record_for_language(store, language)
+    if custom_record:
+        return custom_record
     record = store.get("versions", {}).get(version_id)
     return dict(record) if isinstance(record, dict) else None
+
+
+def _constraint_record_has_custom_text(record: dict[str, Any], language: str) -> bool:
+    text = str(record.get("constraint_text") or "").strip()
+    if not text:
+        return False
+    if record.get("source") != "default":
+        return True
+    return text != build_default_constraint_text(language).strip()
+
+
+def _find_custom_constraint_record_for_language(
+    store: dict[str, Any],
+    language: str,
+) -> dict[str, Any] | None:
+    versions = store.get("versions", {})
+    if not isinstance(versions, dict):
+        return None
+
+    # 固定四语言槽位里的手改版本优先，确保运行时读到角色自己的模板。
+    default_vid = DEFAULT_PROMPT_VERSION_IDS[language]
+    fixed_record = versions.get(default_vid)
+    if isinstance(fixed_record, dict) and _constraint_record_has_custom_text(fixed_record, language):
+        return dict(fixed_record)
+
+    # 兼容旧版隐藏版本：如果同语言旧版本是手改模板，不再回退到硬编码默认模板。
+    for vid, record in versions.items():
+        if vid == default_vid or not isinstance(record, dict):
+            continue
+        record_language = _normalize_prompt_language(record.get("language")) or _prompt_language_from_version_id(vid)
+        if record_language != language:
+            continue
+        if _constraint_record_has_custom_text(record, language):
+            return dict(record)
+
+    return None
 
 
 def get_character_constraint_text(
