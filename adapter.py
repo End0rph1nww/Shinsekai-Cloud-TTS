@@ -161,7 +161,7 @@ class CloudTTSAdapter(TTSAdapter):
                 "need_volume_normalization",
                 need_volume_normalization,
             )
-        self.api_key = (api_key or "").strip()
+        self.api_key = self._normalize_api_key(api_key)
         self.base_api_url = (base_api_url or "https://api.minimaxi.com/v1").rstrip("/")
         self.model = self._normalize_choice(model, VALID_MODELS, "speech-2.8-hd")
         self.default_voice_id = (default_voice_id or "").strip()
@@ -220,11 +220,9 @@ class CloudTTSAdapter(TTSAdapter):
         print(f"Cloud TTS\uff1a{message}", flush=True)
 
     def generate_speech(self, text, file_path=None, **kwargs):
-        if not self.api_key:
-            self._log(
-                "\u5408\u6210\u5931\u8d25\uff1aAPI KEY \u4e3a\u7a7a\uff0c"
-                "\u8bf7\u5148\u5728\u4e3b\u83dc\u5355 API \u8bbe\u7f6e\u9875\u586b\u5199 MiniMax API KEY \u5e76\u4fdd\u5b58\u3002"
-            )
+        api_key_error = self._api_key_error()
+        if api_key_error:
+            self._log(f"\u5408\u6210\u5931\u8d25\uff1a{api_key_error}")
             return None
         text_value = str(text or "")
         character_name = str(kwargs.get("character_name") or "").strip()
@@ -320,8 +318,7 @@ class CloudTTSAdapter(TTSAdapter):
         prompt_text: str = "",
         voice_id: str = "",
     ) -> str:
-        if not self.api_key:
-            raise RuntimeError("MiniMax API key is empty.")
+        self._ensure_api_key()
         path = state.project_path(audio_path).resolve()
         if not path.is_file():
             raise FileNotFoundError(str(path))
@@ -372,16 +369,44 @@ class CloudTTSAdapter(TTSAdapter):
 
     def _json_headers(self) -> dict[str, str]:
         return {
-            "Authorization": f"Bearer {self.api_key}",
+            **self._auth_headers(),
             "Content-Type": "application/json",
         }
+
+    def _auth_headers(self) -> dict[str, str]:
+        self._ensure_api_key()
+        return {"Authorization": f"Bearer {self.api_key}"}
+
+    @staticmethod
+    def _normalize_api_key(value: Any) -> str:
+        key = str(value or "").strip()
+        if key.lower().startswith("bearer "):
+            key = key[7:].strip()
+        return key
+
+    def _api_key_error(self) -> str:
+        if not self.api_key:
+            return "API KEY \u4e3a\u7a7a\uff0c\u8bf7\u5148\u5728\u4e3b\u83dc\u5355 API \u8bbe\u7f6e\u9875\u586b\u5199 MiniMax API KEY \u5e76\u4fdd\u5b58\u3002"
+        try:
+            self.api_key.encode("ascii")
+        except UnicodeEncodeError:
+            return (
+                "API KEY \u5305\u542b\u975e ASCII \u5b57\u7b26\uff0c\u50cf\u662f\u7c98\u8d34\u4e86\u4e2d\u6587\u63d0\u793a\u6216\u8fd0\u884c\u65e5\u5fd7\uff0c"
+                "\u8bf7\u5728\u4e3b\u83dc\u5355 API \u8bbe\u7f6e\u9875\u91cd\u65b0\u586b\u5199 MiniMax API KEY \u5e76\u4fdd\u5b58\u3002"
+            )
+        return ""
+
+    def _ensure_api_key(self) -> None:
+        error = self._api_key_error()
+        if error:
+            raise RuntimeError(error)
 
     def _upload_file(self, path: Path, purpose: str) -> int:
         self._log(f"\u6b63\u5728\u4e0a\u4f20\u53c2\u8003\u97f3\u9891\uff1a{path.name}")
         with path.open("rb") as f:
             resp = requests.post(
                 f"{self.base_api_url}/files/upload",
-                headers={"Authorization": f"Bearer {self.api_key}"},
+                headers=self._auth_headers(),
                 data={"purpose": purpose},
                 files={"file": (path.name, f)},
                 timeout=self.request_timeout,

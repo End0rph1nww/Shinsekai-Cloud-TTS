@@ -14,7 +14,7 @@ import yaml
 PROVIDER_SLUG = "minimax-tts"
 PLUGIN_ID = "com.shinsekai.cloud_tts"
 PLUGIN_ENTRY = "plugins.cloud_tts.plugin:CloudTtsPlugin"
-PLUGIN_VERSION = "0.7.8"
+PLUGIN_VERSION = "0.7.9"
 
 LEGACY_PROVIDER_SLUG = "cloud-tts"
 LEGACY_PLUGIN_ID = "com.shinsekai.minimax_tts"
@@ -51,6 +51,8 @@ PLUGIN_STATE_KEYS = {
 
 CONSTRAINT_START = "<<<CLOUD_TTS_TONE_CONSTRAINT_START>>>"
 CONSTRAINT_END = "<<<CLOUD_TTS_TONE_CONSTRAINT_END>>>"
+LEGACY_CONSTRAINT_START = "<<<MINIMAX_TTS_TONE_CONSTRAINT_START>>>"
+LEGACY_CONSTRAINT_END = "<<<MINIMAX_TTS_TONE_CONSTRAINT_END>>>"
 _PROMPT_CONSTRAINT_SUPPRESS_UNTIL = 0.0
 
 
@@ -364,11 +366,19 @@ def migrate_constraints_from_v0() -> dict[str, int]:
 def remove_prompt_constraint_text(text: str) -> str:
     """Remove constraint markers and content from text."""
     src = text or ""
-    pattern = re.compile(
-        rf"{re.escape(CONSTRAINT_START)}.*?{re.escape(CONSTRAINT_END)}[ \t]*(?:\r?\n)*",
-        re.DOTALL,
+    # 兼容旧 MiniMax 插件标记。否则升级到 Cloud TTS 后，旧块删不掉，
+    # 每次同步都会在模板里再追加一段新的约束词。
+    patterns = (
+        (CONSTRAINT_START, CONSTRAINT_END),
+        (LEGACY_CONSTRAINT_START, LEGACY_CONSTRAINT_END),
     )
-    return pattern.sub("", src).lstrip("\r\n")
+    for start, end in patterns:
+        pattern = re.compile(
+            rf"{re.escape(start)}.*?{re.escape(end)}[ \t]*(?:\r?\n)*",
+            re.DOTALL,
+        )
+        src = pattern.sub("", src)
+    return src.lstrip("\r\n")
 
 
 def add_prompt_constraint_text(text: str, constraint: str | None = None) -> str:
