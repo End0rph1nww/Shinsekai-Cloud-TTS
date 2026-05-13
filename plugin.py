@@ -8,6 +8,7 @@ from sdk.register import PluginCapabilityRegistry
 from sdk.types import SettingsUIContribution
 
 from plugins.cloud_tts.adapter import CloudTTSAdapter
+from plugins.cloud_tts.qwen_adapter import QwenTTSAdapter
 from plugins.cloud_tts import host_hook, prompt_hook, state
 
 
@@ -27,8 +28,9 @@ class CloudTtsPlugin(PluginBase):
     @property
     def plugin_description(self) -> str:
         return (
-            "Cloud TTS adapter for Shinsekai with per-character voice ID binding, "
-            "reference-audio voice cloning, and tone-control prompt helpers."
+            "Cloud TTS adapter for Shinsekai supporting MiniMax and Qwen3 TTS "
+            "with per-character voice ID binding, reference-audio voice cloning, "
+            "and tone-control prompt helpers."
         )
 
     @property
@@ -45,11 +47,12 @@ class CloudTtsPlugin(PluginBase):
         plugin_root: Path,
         host: PluginHostContext,
     ) -> None:
-        # SDK 尚未提供“插件被禁用”的事件；host_hook 只负责禁用时清理失效的 Cloud TTS 选择。
+        # SDK 尚未提供"插件被禁用"的事件；host_hook 只负责禁用时清理失效的 Cloud TTS 选择。
         host_hook.install()
         # SDK 也暂未提供模板钩子；prompt_hook 使用幂等 monkey patch 注入 MiniMax 语气约束。
         prompt_hook.install()
         register.register_tts_adapter(state.PROVIDER_SLUG, CloudTTSAdapter)
+        register.register_tts_adapter(state.QWEN_PROVIDER_SLUG, QwenTTSAdapter)
         def _build_settings(ctx):
             from plugins.cloud_tts.settings import CloudTtsSettingsWidget
 

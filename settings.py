@@ -52,6 +52,12 @@ class CloudTtsSettingsWidget(QWidget):
         self._prompt_constraint_enabled = False
         self._tone_tag_protection_enabled = True
         self._loading_values = True
+        # 默认编辑主 API 页当前选中的 provider
+        cur = state.current_tts_provider()
+        if state.is_qwen_tts_provider(cur):
+            self._edit_provider_slug = state.QWEN_PROVIDER_SLUG
+        else:
+            self._edit_provider_slug = state.PROVIDER_SLUG
         self._build_ui()
         self._load_values()
         self._reload_characters()
@@ -61,6 +67,35 @@ class CloudTtsSettingsWidget(QWidget):
         """页签切到插件时自动刷新角色列表."""
         super().showEvent(event)
         self._reload_characters()
+
+    def _is_qwen_active(self) -> bool:
+        return self._edit_provider_slug == state.QWEN_PROVIDER_SLUG
+
+    def _is_minimax_active(self) -> bool:
+        return self._edit_provider_slug == state.PROVIDER_SLUG
+
+    def _current_provider_model_options(self) -> tuple[str, ...]:
+        if self._is_qwen_active():
+            return state.QWEN_MODELS
+        return VALID_MODELS
+
+    def _current_provider_default_model(self) -> str:
+        if self._is_qwen_active():
+            return state.QWEN_DEFAULT_MODEL
+        return "speech-2.8-hd"
+
+    def _provider_extra(self) -> dict[str, Any]:
+        """返回当前编辑中 provider 的 api.yaml extra 配置。"""
+        if self._is_qwen_active():
+            return state.get_qwen_extra()
+        return state.get_cloud_extra()
+
+    def _save_provider_extra(self, values: dict[str, Any]) -> None:
+        """保存 model / default_voice_id 等到当前 provider 的 api.yaml extra。"""
+        if self._is_qwen_active():
+            state.set_qwen_extra(values)
+        else:
+            state.set_cloud_extra(values)
 
     def _build_ui(self) -> None:
         self._apply_field_style()
@@ -83,10 +118,18 @@ class CloudTtsSettingsWidget(QWidget):
 
         root.addWidget(self._guide_block())
 
+        # Provider 选择器，独立于主 API 页，方便分别配置两个模型
+        provider_box, provider_lay = self._section("TTS Provider 配置")
+        self.edit_provider = self._combo()
+        self.edit_provider.addItem("MiniMax TTS", state.PROVIDER_SLUG)
+        self.edit_provider.addItem("Qwen3 TTS", state.QWEN_PROVIDER_SLUG)
+        self.edit_provider.currentIndexChanged.connect(self._on_edit_provider_changed)
+        provider_lay.addWidget(self._row("当前编辑", self.edit_provider))
+        root.addWidget(provider_box)
+
         api_box, api_lay = self._section("模型与兜底声线")
         self.model = self._combo()
-        for item in VALID_MODELS:
-            self.model.addItem(item, item)
+        self._refresh_model_options()
         self.model.currentIndexChanged.connect(lambda _index: self._on_model_changed())
         api_lay.addWidget(self._row("模型", self.model))
 
@@ -99,9 +142,20 @@ class CloudTtsSettingsWidget(QWidget):
             self._on_default_voice_changed
         )
         api_lay.addWidget(self._row("默认 voice_id", self.default_voice_id))
+
+        # Qwen 特有：合成语言
+        self.qwen_language_type = self._combo()
+        for code, label in state.QWEN_LANGUAGE_TYPES:
+            self.qwen_language_type.addItem(label, code)
+        self.qwen_language_type.currentIndexChanged.connect(
+            lambda _index: self._on_qwen_language_type_changed()
+        )
+        self.qwen_language_type_row = self._row("合成语言", self.qwen_language_type)
+        api_lay.addWidget(self.qwen_language_type_row)
+
         root.addWidget(api_box)
 
-        switch_box, switch_lay = self._section("功能开关")
+        self.switch_box, switch_lay = self._section("功能开关")
         switch_lay.addWidget(
             self._feature_label(
                 "⭐ 提示词约束：推荐开启，体验完整效果；插件会按主程序语音语言注入对应角色模板。"
@@ -125,7 +179,7 @@ class CloudTtsSettingsWidget(QWidget):
                 "⭐ TTS 分句：推荐到主菜单 API 页关闭「启用分句合成语音」，避免云端语音被切碎。"
             )
         )
-        root.addWidget(switch_box)
+        root.addWidget(self.switch_box)
 
         voice_box, voice_lay = self._section("角色语音配置")
 
@@ -208,7 +262,7 @@ class CloudTtsSettingsWidget(QWidget):
 
         root.addWidget(voice_box)
 
-        template_box, template_lay = self._section("提示词模板")
+        self.template_box, template_lay = self._section("提示词模板")
         self.template_character_combo = self._combo()
         self.template_character_combo.setMinimumContentsLength(20)
         self.template_character_combo.currentIndexChanged.connect(self._on_template_character_changed)
@@ -251,7 +305,7 @@ class CloudTtsSettingsWidget(QWidget):
         template_actions_lay.addWidget(self.save_version_btn)
         template_actions_lay.addWidget(self.reset_default_btn)
         template_lay.addWidget(template_actions)
-        root.addWidget(template_box)
+        root.addWidget(self.template_box)
 
         root.addStretch(1)
 
@@ -293,23 +347,19 @@ class CloudTtsSettingsWidget(QWidget):
         lay.addWidget(title)
 
         body = QLabel(
-            "<b>1. 前置条件：</b>先在首页 / 主菜单 API 设置页选择 MiniMax TTS，填写 API KEY 和 BASE URL 并保存。"
-            "本页不重复保存这两个连接凭证。<br/><br/>"
-            "<b>2. 功能开关：</b>建议开启<b>提示词约束</b>，向 LLM 注入语气标签指令让语音表现更丰富。"
-            "建议保持<b>语气标签保护</b>开启，避免主程序清理括号时删掉 translate 里的语气标签。"
+            "<b>1. 前置条件：</b>先在首页 / 主菜单 API 设置页选择 MiniMax TTS 或 Qwen3 TTS，填写对应 API KEY 和 BASE URL 并保存。"
+            "本页不重复保存连接凭证。<br/><br/>"
+            "<b>2. MiniMax 模式：</b>建议开启<b>提示词约束</b>和<b>语气标签保护</b>，让 translate 字段的语气标签不被打断。"
             "TTS 分段功能已由主程序接管，请在 API 设置页配置「TTS 分句发送」。<br/><br/>"
-            "<b>3. 角色 voice_id：</b>选择角色后在下拉框中选择或粘贴 voice_id，支持多版本历史管理。"
-            "也可选择本地参考音频后上传克隆 voice_id，绕开主程序参考音频时长限制；"
+            "<b>3. Qwen3 TTS 模式：</b>通过<b>声音复刻</b>上传参考音频创建自定义音色，"
+            "合成和复刻均使用 qwen3-tts-vc 模型。支持多语种合成。<br/><br/>"
+            "<b>4. 角色 voice_id：</b>选择角色后在下拉框中选择或粘贴 voice_id，支持多版本历史管理。"
+            "也可选择本地参考音频后上传克隆/复刻 voice_id；"
             "结果缓存在 <code>data/plugins/com.shinsekai.cloud_tts/voices/</code>。<br/><br/>"
-            "<b>4. 提示词模板：</b>「默认模板」内置中文、日语、粤语、英语四套母版；每个角色首次打开也会自动生成四套同语种默认提示词。"
-            "模板语言下拉框只用于编辑对应语言模板，不决定运行时注入语言；实际注入语言会跟随主程序当前语音语言。"
-            "四个语言模板固定，不支持新建或删除；上方文本框可直接修改当前角色对应语言的提示词。<br/><br/>"
-            "<b>5. 参考音频语言：</b>在角色语音配置里选择参考音频语言，用于 MiniMax 识别参考音频并创建 voice_id；"
-            "不确定时保持「自动识别 / auto」。"
+            "<b>5. 提示词模板（仅 MiniMax）：</b>「默认模板」内置中文、日语、粤语、英语四套母版；每个角色首次打开也会自动生成四套同语种默认提示词。"
         )
         body.setWordWrap(True)
         body.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-        # 支持富文本中的 HTML 标签
         body.setTextFormat(Qt.TextFormat.RichText)
         lay.addWidget(body)
         return block
@@ -430,6 +480,73 @@ class CloudTtsSettingsWidget(QWidget):
         state_text = "开启" if self._tone_tag_protection_enabled else "关闭"
         self._save(f"语气标签保护已{state_text}。")
 
+    def _update_provider_visibility(self) -> None:
+        """根据当前选中的 TTS provider 切换可见的 UI 区块。"""
+        is_qwen = self._is_qwen_active()
+        is_minimax = self._is_minimax_active()
+        # Qwen 特有控件
+        self.qwen_language_type_row.setVisible(is_qwen)
+        # MiniMax 特有区块
+        self.switch_box.setVisible(is_minimax)
+        self.template_box.setVisible(is_minimax)
+
+    def _on_edit_provider_changed(self) -> None:
+        """用户手动切换插件页的 provider 编辑视图。"""
+        if self._loading_values:
+            return
+        new_slug = self.edit_provider.currentData()
+        if not new_slug or new_slug == self._edit_provider_slug:
+            return
+        # 保存当前编辑的 model/default_voice_id/voice 数据到旧 provider
+        self._store_current_character_voice_id()
+        self._save_provider_extra({
+            "model": str(self.model.currentData() or ""),
+            "default_voice_id": self._combo_voice_id(self.default_voice_id),
+            "language_type": str(self.qwen_language_type.currentData() or "Chinese") if self._is_qwen_active() else "",
+        })
+        state.save_voice_config_to_files(
+            dict(self._voice_id_map),
+            dict(self._voice_id_versions),
+            provider_slug=self._edit_provider_slug,
+        )
+        # 切换到新 provider
+        self._edit_provider_slug = new_slug
+        # 重新加载 voice 数据
+        cfg = state.load_plugin_config(self._plugin_root, self._edit_provider_slug)
+        self._voice_id_map = self._coerce_voice_id_map(cfg.get("voice_id_map"))
+        self._voice_id_versions = self._coerce_voice_id_versions(cfg.get("voice_id_versions"))
+        # 刷新模型列表并加载新 provider 的配置
+        self._refresh_model_options()
+        extra = self._provider_extra()
+        model_value = extra.get("model", self._current_provider_default_model())
+        self._set_combo(self.model, model_value)
+        default_vid = extra.get("default_voice_id", "")
+        self._refresh_default_voice_options(default_vid or "")
+        self._set_voice_combo_value(self.default_voice_id, default_vid)
+        lang = extra.get("language_type", "Chinese")
+        self._set_combo(self.qwen_language_type, lang)
+        self._update_provider_visibility()
+        # 刷新当前角色的 voice 选项
+        char = self.character_combo.currentText().strip()
+        if char:
+            self._refresh_character_voice_options(char)
+        provider_label = "Qwen3 TTS" if self._is_qwen_active() else "MiniMax TTS"
+        self.status.setText(f"已切换到 {provider_label} 配置视图。")
+
+    def _refresh_model_options(self) -> None:
+        """根据当前选中的 TTS provider 刷新模型下拉框。"""
+        self.model.blockSignals(True)
+        self.model.clear()
+        for item in self._current_provider_model_options():
+            self.model.addItem(item, item)
+        self.model.blockSignals(False)
+
+    def _on_qwen_language_type_changed(self) -> None:
+        if self._loading_values:
+            return
+        lang = self.qwen_language_type.currentData()
+        self._save(f"Qwen 合成语言已切换为 {lang or 'auto'}。")
+
     def _on_model_changed(self) -> None:
         if self._loading_values:
             return
@@ -461,8 +578,9 @@ class CloudTtsSettingsWidget(QWidget):
     def _load_values(self) -> None:
         state.migrate_package_config_to_data_root()
         state.migrate_api_extra_to_plugin_state(self._plugin_root)
-        cfg = state.load_plugin_config(self._plugin_root)
-        extra = state.get_cloud_extra()
+        cfg = state.load_plugin_config(self._plugin_root, self._edit_provider_slug)
+        # 根据编辑的 provider 读取 api.yaml 中的对应 extra
+        extra = self._provider_extra()
         values = dict(
             {
                 k: v
@@ -472,9 +590,15 @@ class CloudTtsSettingsWidget(QWidget):
         )
         # 官方 adapter 配置从 api.yaml 读取；旧版插件状态只作为兼容兜底。
         values.update(extra)
+        # 设置 provider 选择器（不触发信号，因为 _loading_values=True）
+        self._set_combo(self.edit_provider, self._edit_provider_slug)
         self._set_combo(
             self.model,
-            self._valid_choice(values.get("model"), VALID_MODELS, "speech-2.8-hd"),
+            self._valid_choice(
+                values.get("model"),
+                self._current_provider_model_options(),
+                self._current_provider_default_model(),
+            ),
         )
         self._voice_id_map = self._coerce_voice_id_map(values.get("voice_id_map"))
         self._voice_id_versions = self._coerce_voice_id_versions(values.get("voice_id_versions"))
@@ -496,6 +620,10 @@ class CloudTtsSettingsWidget(QWidget):
         )
         self._refresh_prompt_constraint_button()
         self._refresh_tone_tag_protection_button()
+        # Qwen 特有字段
+        qwen_lang = str(values.get("qwen_language_type") or values.get("language_type") or "Chinese")
+        self._set_combo(self.qwen_language_type, qwen_lang)
+        self._update_provider_visibility()
 
     def _set_combo(self, combo: QComboBox, value: str) -> None:
         idx = combo.findData(value)
@@ -825,8 +953,9 @@ class CloudTtsSettingsWidget(QWidget):
         self._store_current_character_voice_id()
         self._store_current_local_reference_audio()
         self._store_current_reference_audio_language()
-        return {
-            "model": str(self.model.currentData() or "speech-2.8-hd"),
+        default_model = self._current_provider_default_model()
+        result = {
+            "model": str(self.model.currentData() or default_model),
             "default_voice_id": self._combo_voice_id(self.default_voice_id),
             "voice_id_map": dict(self._voice_id_map),
             "voice_id_versions": dict(self._voice_id_versions),
@@ -835,11 +964,19 @@ class CloudTtsSettingsWidget(QWidget):
             "auto_prompt_constraint": self._prompt_constraint_enabled,
             "protect_translate_tone_tags": self._tone_tag_protection_enabled,
         }
+        if self._is_qwen_active():
+            result["qwen_language_type"] = str(self.qwen_language_type.currentData() or "Chinese")
+        return result
 
-    def _adapter(self) -> CloudTTSAdapter:
+    def _adapter(self):
+        """返回当前 provider 对应的 adapter 实例，用于上传/克隆操作。"""
         values = self._values()
+        if self._is_qwen_active():
+            from plugins.cloud_tts.qwen_adapter import QwenTTSAdapter
+            values.update(state.get_qwen_extra())
+            values["use_runtime_config"] = False
+            return QwenTTSAdapter(**values)
         values.update(state.get_cloud_extra())
-        # 上传按钮使用当前表单即时值，不等待下一次 adapter 运行时重新读配置。
         values["use_runtime_config"] = False
         return CloudTTSAdapter(**values)
 
@@ -849,8 +986,16 @@ class CloudTtsSettingsWidget(QWidget):
         self._store_current_character_voice_id()
         values = self._values()
         state.suppress_prompt_constraint()
-        # 插件页只保存 MiniMax 行为参数；实际 TTS 引擎由主菜单 API 页选择。
-        state.save_plugin_config(self._plugin_root, values)
+        # 插件页保存行为参数到插件数据目录。
+        state.save_plugin_config(self._plugin_root, values, self._edit_provider_slug)
+        # 当前编辑 provider 的 model / default_voice_id 等写入 api.yaml extra。
+        provider_extra = {
+            "model": str(self.model.currentData() or ""),
+            "default_voice_id": self._combo_voice_id(self.default_voice_id),
+        }
+        if self._is_qwen_active():
+            provider_extra["language_type"] = str(self.qwen_language_type.currentData() or "Chinese")
+        self._save_provider_extra(provider_extra)
         # 不刷新主 ConfigManager，避免插件页保存时连带触发模板页生成 Prompt。
         self.status.setText(status_message or "插件设置已保存。")
 
@@ -1288,20 +1433,35 @@ class CloudTtsSettingsWidget(QWidget):
         if not path or not path.is_file():
             QMessageBox.warning(self, "Cloud TTS", "请先选择一个存在的本地参考音频。")
             return
-        if not str(state.get_cloud_extra().get("api_key") or "").strip():
-            QMessageBox.warning(self, "Cloud TTS", "请先在 API 设定页填写 MiniMax API KEY。")
+        is_qwen = self._is_qwen_active()
+        provider_label = "DashScope" if is_qwen else "MiniMax"
+        api_extra = state.get_qwen_extra() if is_qwen else state.get_cloud_extra()
+        if not str(api_extra.get("api_key") or "").strip():
+            QMessageBox.warning(
+                self, "Cloud TTS",
+                f"请先在 API 设定页选择 {'Qwen3 TTS' if is_qwen else 'MiniMax TTS'} 并填写 API KEY。",
+            )
             return
         self.upload_btn.setEnabled(False)
-        self.status.setText("正在转换并上传参考音频，随后创建 voice_id...")
+        self.status.setText(f"正在上传参考音频，通过 {provider_label} 创建 voice_id...")
         try:
-            voice_id = self._adapter().create_cloned_voice_from_file(
-                path,
-                character_name=str(char.get("name") or ""),
-                prompt_text=str(char.get("prompt_text") or ""),
-                reference_audio_language=self._reference_audio_language_for_name(
-                    str(char.get("name") or "")
-                ),
-            )
+            adapter = self._adapter()
+            if is_qwen:
+                voice_id = adapter.create_cloned_voice_from_file(
+                    path,
+                    character_name=str(char.get("name") or ""),
+                    voice_name=str(char.get("name") or ""),
+                    target_model=str(self.model.currentData() or ""),
+                )
+            else:
+                voice_id = adapter.create_cloned_voice_from_file(
+                    path,
+                    character_name=str(char.get("name") or ""),
+                    prompt_text=str(char.get("prompt_text") or ""),
+                    reference_audio_language=self._reference_audio_language_for_name(
+                        str(char.get("name") or "")
+                    ),
+                )
         except Exception as exc:
             self.status.setText(f"上传失败：{exc}")
             QMessageBox.warning(self, "Cloud TTS", str(exc))

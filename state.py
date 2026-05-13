@@ -12,9 +12,10 @@ import yaml
 
 
 PROVIDER_SLUG = "minimax-tts"
+QWEN_PROVIDER_SLUG = "qwen-tts"
 PLUGIN_ID = "com.shinsekai.cloud_tts"
 PLUGIN_ENTRY = "plugins.cloud_tts.plugin:CloudTtsPlugin"
-PLUGIN_VERSION = "0.9.7"
+PLUGIN_VERSION = "0.10.1"
 
 LEGACY_PROVIDER_SLUG = "cloud-tts"
 LEGACY_PLUGIN_ID = "com.shinsekai.minimax_tts"
@@ -26,6 +27,9 @@ LEGACY_PLUGIN_ENTRIES = frozenset({LEGACY_PLUGIN_ENTRY})
 ADAPTER_CONFIG_KEYS = {
     "api_key",
     "base_api_url",
+    "model",
+    "default_voice_id",
+    "language_type",
 }
 
 # 这些字段由 Cloud TTS 插件设置页维护，运行时会传给 TTS adapter。
@@ -36,6 +40,35 @@ PLUGIN_STATE_KEYS = {
     "auto_prompt_constraint",
     "protect_translate_tone_tags",
 }
+
+# ----------------------------------------------------------------------
+# Qwen TTS (DashScope / 百炼) 常量
+# ----------------------------------------------------------------------
+
+QWEN_MODELS = (
+    "qwen3-tts-vc-2026-01-22",
+)
+QWEN_DEFAULT_MODEL = "qwen3-tts-vc-2026-01-22"
+
+QWEN_LANGUAGE_TYPES = (
+    ("Chinese", "中文（普通话）"),
+    ("English", "英语"),
+    ("Japanese", "日语"),
+    ("Korean", "韩语"),
+    ("French", "法语"),
+    ("German", "德语"),
+    ("Russian", "俄语"),
+    ("Italian", "意大利语"),
+    ("Spanish", "西班牙语"),
+    ("Portuguese", "葡萄牙语"),
+)
+
+QWEN_VOICE_ENROLLMENT_MODEL = "qwen-voice-enrollment"
+# 声音复刻时 target_model 必须与合成时一致，且必须是 VC 系列模型
+QWEN_VC_MODEL = "qwen3-tts-vc-2026-01-22"
+
+# 所有 Cloud TTS 支持的 provider slug
+ALL_CLOUD_TTS_SLUGS = frozenset({PROVIDER_SLUG, QWEN_PROVIDER_SLUG})
 
 CONSTRAINT_START = "<<<CLOUD_TTS_TONE_CONSTRAINT_START>>>"
 CONSTRAINT_END = "<<<CLOUD_TTS_TONE_CONSTRAINT_END>>>"
@@ -205,9 +238,9 @@ translate 字段不是外语翻译，而是 Cloud TTS 的中文合成文本。
 中文适配规则：
 1. translate 必须使用自然简体中文，可以与 speech 完全相同，也可以在不改变语义的前提下改得更口语、更适合朗读。
 2. speech 只负责屏幕显示，保持干净中文；translate 才允许加入语气标签。
-3. 角色口癖可以少量保留，例如“りょ”“ヤバ”“ガチ？”“前辈”，但整句主体必须是中文。
-4. 标签优先放在句首或自然停顿处，例如“(chuckle)前辈，这个我来观测。”、“前辈，(sighs)这个风险要先压住。”
-5. 不要把标签翻译成“笑声”“叹气”，也不要写成舞台说明。
+3. 角色口癖可以少量保留，例如"りょ""ヤバ""ガチ？""前辈"，但整句主体必须是中文。
+4. 标签优先放在句首或自然停顿处，例如"(chuckle)前辈，这个我来观测。"、"前辈，(sighs)这个风险要先压住。"
+5. 不要把标签翻译成"笑声""叹气"，也不要写成舞台说明。
 中文示例：
 {_dialog_schema_example("该句台词的中文 TTS 文本（与系统语音目标语言一致，可加入语气标签）")}"""
     if code == "ja":
@@ -215,9 +248,9 @@ translate 字段不是外语翻译，而是 Cloud TTS 的中文合成文本。
 translate 字段是 Cloud TTS 的日语合成文本。
 日语适配规则：
 1. translate 要把 speech 的中文台词改写为自然日语，不要逐字硬翻。
-2. 可以保留角色称呼、口癖和语气，例如“先輩”“りょ”“ヤバ”“ガチ？”；但整体必须像日语台词。
+2. 可以保留角色称呼、口癖和语气，例如"先輩""りょ""ヤバ""ガチ？"；但整体必须像日语台词。
 3. 语气标签仍然使用英文括号标签，不能翻译成日语。
-4. 标签适合放在句首或日语停顿处，例如“(chuckle)先輩、これは華淡が観測します。”、“えっと……(sighs)先輩、それは少し危ないです。”
+4. 标签适合放在句首或日语停顿处，例如"(chuckle)先輩、これは華淡が観測します。"、"えっと……(sighs)先輩、それは少し危ないです。"
 5. speech 仍然保持简体中文，不能把日语或标签写进 speech。
 日语示例：
 {_dialog_schema_example("该句台词的日语译文（与系统语音目标语言一致，可加入语气标签）")}"""
@@ -225,10 +258,10 @@ translate 字段是 Cloud TTS 的日语合成文本。
         return f"""角色语音目标：粤语。
 translate 字段是 Cloud TTS 的粤语合成文本。
 粤语适配规则：
-1. translate 要把 speech 的中文台词改写为自然粤语口语，可以使用“啦”“喎”“啫”“咁”“唔”“冇”等粤语表达。
+1. translate 要把 speech 的中文台词改写为自然粤语口语，可以使用"啦""喎""啫""咁""唔""冇"等粤语表达。
 2. 不要只把普通话词序照搬成粤语，要让句子适合粤语朗读。
 3. 语气标签仍然使用英文括号标签，不能翻译成中文或粤语。
-4. 标签适合放在句首或自然停顿处，例如“(chuckle)前辈，呢个我嚟睇住，问题唔大。”、“(sighs)前辈，呢度要小心啲。”
+4. 标签适合放在句首或自然停顿处，例如"(chuckle)前辈，呢个我嚟睇住，问题唔大。"、"(sighs)前辈，呢度要小心啲。"
 5. speech 仍然保持简体中文，不能把粤语写进 speech。
 粤语示例：
 {_dialog_schema_example("该句台词的粤语译文（与系统语音目标语言一致，可加入语气标签）")}"""
@@ -238,7 +271,7 @@ translate 字段是 Cloud TTS 的英语合成文本。
 英语适配规则：
 1. translate 要把 speech 的中文台词改写为自然口语英语，不要逐字硬翻。
 2. 可以使用 contraction，例如 I’ll、don’t、it’s，让语音更自然。
-3. 角色称呼可按语境处理，例如“前辈”可写为 Senpai 或 senior；保持角色风格优先。
+3. 角色称呼可按语境处理，例如"前辈"可写为 Senpai 或 senior；保持角色风格优先。
 4. 语气标签仍然使用英文括号标签，不要改写成 stage directions。
 5. speech 仍然保持简体中文，不能把英语或标签写进 speech。
 英语示例：
@@ -896,6 +929,16 @@ def is_cloud_tts_provider(provider: str | None) -> bool:
     return slug == PROVIDER_SLUG or slug in LEGACY_PROVIDER_SLUGS
 
 
+def is_qwen_tts_provider(provider: str | None) -> bool:
+    slug = str(provider or "").strip().lower()
+    return slug == QWEN_PROVIDER_SLUG
+
+
+def is_any_cloud_tts_provider(provider: str | None) -> bool:
+    slug = str(provider or "").strip().lower()
+    return slug in ALL_CLOUD_TTS_SLUGS or slug in LEGACY_PROVIDER_SLUGS
+
+
 def is_cloud_tts_entry(entry: str | None) -> bool:
     value = str(entry or "").strip()
     return value == PLUGIN_ENTRY or value in LEGACY_PLUGIN_ENTRIES
@@ -970,12 +1013,30 @@ def migrate_legacy_plugin_data_root() -> None:
         shutil.copy2(src, dst)
 
 
-def voice_store_root() -> Path:
-    return plugin_data_root() / "voices"
+def voice_store_root(provider_slug: str = PROVIDER_SLUG) -> Path:
+    return plugin_data_root() / provider_slug / "voices"
 
 
-def voice_defaults_path() -> Path:
-    return voice_store_root() / "_defaults.json"
+def voice_defaults_path(provider_slug: str = PROVIDER_SLUG) -> Path:
+    return voice_store_root(provider_slug) / "_defaults.json"
+
+
+def migrate_voice_store_to_provider(provider_slug: str) -> None:
+    """将旧版共享 voice 目录迁移到 MiniMax per-provider 子目录。旧数据都是 MiniMax 的，Qwen 不迁移。"""
+    if provider_slug != PROVIDER_SLUG:
+        return
+    old_root = plugin_data_root() / "voices"
+    new_root = voice_store_root(provider_slug)
+    if not old_root.is_dir() or new_root.is_dir():
+        return
+    new_root.mkdir(parents=True, exist_ok=True)
+    for src in sorted(old_root.glob("*.json")):
+        dst = new_root / src.name
+        if not dst.exists():
+            try:
+                dst.write_bytes(src.read_bytes())
+            except OSError:
+                pass
 
 
 def migrate_legacy_voice_store() -> None:
@@ -1061,6 +1122,15 @@ def get_cloud_extra() -> dict[str, Any]:
     return dict(cur) if isinstance(cur, dict) else {}
 
 
+def get_qwen_extra() -> dict[str, Any]:
+    data = load_api_config()
+    all_extra = data.get("tts_extra_configs")
+    if not isinstance(all_extra, dict):
+        return {}
+    cur = all_extra.get(QWEN_PROVIDER_SLUG)
+    return dict(cur) if isinstance(cur, dict) else {}
+
+
 def set_cloud_extra(extra: dict[str, Any]) -> None:
     migrate_legacy_api_config()
     data = load_api_config()
@@ -1074,6 +1144,23 @@ def set_cloud_extra(extra: dict[str, Any]) -> None:
             incoming.pop(key, None)
     merged.update(incoming)
     all_extra[PROVIDER_SLUG] = merged
+    data["tts_extra_configs"] = all_extra
+    save_api_config(data)
+
+
+def set_qwen_extra(extra: dict[str, Any]) -> None:
+    """保存 Qwen TTS adapter 配置到 api.yaml。"""
+    data = load_api_config()
+    all_extra = data.get("tts_extra_configs")
+    if not isinstance(all_extra, dict):
+        all_extra = {}
+    merged = adapter_config_from_values(dict(all_extra.get(QWEN_PROVIDER_SLUG) or {}))
+    incoming = adapter_config_from_values(extra)
+    for key, value in list(incoming.items()):
+        if not str(value or "").strip() and str(merged.get(key) or "").strip():
+            incoming.pop(key, None)
+    merged.update(incoming)
+    all_extra[QWEN_PROVIDER_SLUG] = merged
     data["tts_extra_configs"] = all_extra
     save_api_config(data)
 
@@ -1139,7 +1226,8 @@ def current_tts_provider() -> str:
 def clear_cloud_tts_provider_if_selected() -> bool:
     """插件被禁用时，避免主菜单保留一个下一次无法注册的 Cloud TTS 引擎。"""
     data = load_api_config()
-    if is_cloud_tts_provider(str(data.get("tts_provider") or "")):
+    provider = str(data.get("tts_provider") or "")
+    if is_any_cloud_tts_provider(provider):
         data["tts_provider"] = "none"
         save_api_config(data)
         return True
@@ -1152,6 +1240,7 @@ def remove_cloud_extra() -> None:
     if isinstance(all_extra, dict):
         all_extra.pop(PROVIDER_SLUG, None)
         all_extra.pop(LEGACY_PROVIDER_SLUG, None)
+        all_extra.pop(QWEN_PROVIDER_SLUG, None)
         data["tts_extra_configs"] = all_extra
         save_api_config(data)
 
@@ -1183,8 +1272,8 @@ def _voice_file_stem(character_name: str) -> str:
     return f"{safe}_{short_hash(name, 10)}"
 
 
-def voice_file_path(character_name: str) -> Path:
-    return voice_store_root() / f"{_voice_file_stem(character_name)}.json"
+def voice_file_path(character_name: str, provider_slug: str = PROVIDER_SLUG) -> Path:
+    return voice_store_root(provider_slug) / f"{_voice_file_stem(character_name)}.json"
 
 
 def _normalize_voice_record(item: Any) -> dict[str, Any] | None:
@@ -1266,9 +1355,10 @@ def _voice_stores_from_config(cfg: dict[str, Any]) -> dict[str, dict[str, Any]]:
     return stores
 
 
-def load_voice_stores() -> dict[str, dict[str, Any]]:
+def load_voice_stores(provider_slug: str = PROVIDER_SLUG) -> dict[str, dict[str, Any]]:
     migrate_legacy_voice_store()
-    root = voice_store_root()
+    migrate_voice_store_to_provider(provider_slug)
+    root = voice_store_root(provider_slug)
     stores: dict[str, dict[str, Any]] = {}
     if not root.is_dir():
         return stores
@@ -1302,15 +1392,16 @@ def load_voice_stores() -> dict[str, dict[str, Any]]:
     return stores
 
 
-def load_voice_defaults() -> dict[str, Any]:
+def load_voice_defaults(provider_slug: str = PROVIDER_SLUG) -> dict[str, Any]:
     migrate_legacy_voice_store()
-    raw = _read_json(voice_defaults_path(), {})
+    migrate_voice_store_to_provider(provider_slug)
+    raw = _read_json(voice_defaults_path(provider_slug), {})
     return dict(raw) if isinstance(raw, dict) else {}
 
 
-def save_voice_defaults(default_voice_id: str | None) -> None:
+def save_voice_defaults(default_voice_id: str | None, provider_slug: str = PROVIDER_SLUG) -> None:
     voice_id = str(default_voice_id or "").strip()
-    path = voice_defaults_path()
+    path = voice_defaults_path(provider_slug)
     if not voice_id:
         if path.exists():
             path.unlink()
@@ -1318,8 +1409,8 @@ def save_voice_defaults(default_voice_id: str | None) -> None:
     _write_json(path, {"default_voice_id": voice_id})
 
 
-def voice_config_from_files() -> tuple[dict[str, str], dict[str, list[dict[str, Any]]]]:
-    stores = load_voice_stores()
+def voice_config_from_files(provider_slug: str = PROVIDER_SLUG) -> tuple[dict[str, str], dict[str, list[dict[str, Any]]]]:
+    stores = load_voice_stores(provider_slug)
     voice_map: dict[str, str] = {}
     versions: dict[str, list[dict[str, Any]]] = {}
     for name, store in stores.items():
@@ -1335,6 +1426,7 @@ def voice_config_from_files() -> tuple[dict[str, str], dict[str, list[dict[str, 
 def save_voice_config_to_files(
     voice_id_map: dict[str, str] | None,
     voice_id_versions: dict[str, Any] | None,
+    provider_slug: str = PROVIDER_SLUG,
 ) -> None:
     cfg = {
         "voice_id_map": voice_id_map or {},
@@ -1343,7 +1435,7 @@ def save_voice_config_to_files(
     stores = _voice_stores_from_config(cfg)
     for character_name, store in stores.items():
         store["updated_at"] = int(time.time())
-        _write_json(voice_file_path(character_name), store)
+        _write_json(voice_file_path(character_name, provider_slug), store)
 
 
 def upsert_voice_record(
@@ -1352,12 +1444,13 @@ def upsert_voice_record(
     record: dict[str, Any] | None = None,
     *,
     selected: bool = True,
+    provider_slug: str = PROVIDER_SLUG,
 ) -> None:
     name = (character_name or "").strip()
     vid = (voice_id or "").strip()
     if not name or not vid:
         return
-    path = voice_file_path(name)
+    path = voice_file_path(name, provider_slug)
     raw = _read_json(path, {})
     if not isinstance(raw, dict):
         raw = {}
@@ -1406,14 +1499,16 @@ def _write_plugin_config_file(plugin_root: Path, data: dict[str, Any]) -> None:
     _write_json(plugin_root / "config.json", data)
 
 
-def _merge_voice_files_into_config(data: dict[str, Any]) -> dict[str, Any]:
+def _merge_voice_files_into_config(data: dict[str, Any], provider_slug: str = PROVIDER_SLUG) -> dict[str, Any]:
     merged = dict(data)
     raw_default_voice_id = str(merged.get("default_voice_id") or "").strip()
-    voice_map, versions = voice_config_from_files()
-    defaults = load_voice_defaults()
+    voice_map, versions = voice_config_from_files(provider_slug)
+    defaults = load_voice_defaults(provider_slug)
+    # 旧 config.json 中的 voice 数据均为 MiniMax 时代遗留，只迁入 minimax-tts
     if raw_default_voice_id and "default_voice_id" not in defaults:
-        save_voice_defaults(raw_default_voice_id)
-        defaults = load_voice_defaults()
+        save_voice_defaults(raw_default_voice_id, PROVIDER_SLUG)
+        if provider_slug == PROVIDER_SLUG:
+            defaults = load_voice_defaults(provider_slug)
     old_stores = _voice_stores_from_config(merged)
     if old_stores:
         old_map: dict[str, str] = {}
@@ -1429,8 +1524,10 @@ def _merge_voice_files_into_config(data: dict[str, Any]) -> dict[str, Any]:
             save_voice_config_to_files(
                 {**old_map, **voice_map},
                 {**old_versions, **versions},
+                provider_slug=PROVIDER_SLUG,
             )
-            voice_map, versions = voice_config_from_files()
+            if provider_slug == PROVIDER_SLUG:
+                voice_map, versions = voice_config_from_files(provider_slug)
     merged = _strip_voice_config(merged)
     if voice_map:
         merged["voice_id_map"] = voice_map
@@ -1442,7 +1539,7 @@ def _merge_voice_files_into_config(data: dict[str, Any]) -> dict[str, Any]:
     return merged
 
 
-def load_plugin_config(plugin_root: Path) -> dict[str, Any]:
+def load_plugin_config(plugin_root: Path, provider_slug: str = PROVIDER_SLUG) -> dict[str, Any]:
     roots = [plugin_root, plugin_data_root(), plugin_package_root()]
     seen: set[Path] = set()
     paths: list[Path] = []
@@ -1459,7 +1556,7 @@ def load_plugin_config(plugin_root: Path) -> dict[str, Any]:
             continue
         raw = _read_json(path, {})
         if isinstance(raw, dict):
-            return _merge_voice_files_into_config(raw)
+            return _merge_voice_files_into_config(raw, provider_slug)
     return {}
 
 
@@ -1485,14 +1582,15 @@ def _bool_config_value(value: Any, default: bool) -> bool:
     return bool(value)
 
 
-def save_plugin_config(plugin_root: Path, data: dict[str, Any]) -> None:
+def save_plugin_config(plugin_root: Path, data: dict[str, Any], provider_slug: str = PROVIDER_SLUG) -> None:
     voice_map = data.get("voice_id_map")
     voice_versions = data.get("voice_id_versions")
-    save_voice_defaults(str(data.get("default_voice_id") or ""))
+    save_voice_defaults(str(data.get("default_voice_id") or ""), provider_slug)
     if isinstance(voice_map, dict) or isinstance(voice_versions, dict):
         save_voice_config_to_files(
             voice_map if isinstance(voice_map, dict) else {},
             voice_versions if isinstance(voice_versions, dict) else {},
+            provider_slug=provider_slug,
         )
     _write_plugin_config_file(plugin_root, plugin_state_from_values(data))
 

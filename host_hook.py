@@ -27,6 +27,7 @@ def _remove_runtime_adapter() -> None:
         from tts.tts_manager import TTSAdapterFactory
 
         TTSAdapterFactory._adapters.pop(state.PROVIDER_SLUG, None)
+        TTSAdapterFactory._adapters.pop(state.QWEN_PROVIDER_SLUG, None)
     except Exception:
         pass
 

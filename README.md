@@ -1,140 +1,127 @@
 # Cloud TTS
 
-MiniMax speech-2.x 语音合成插件。它会向 Shinsekai 注册一个新的 TTS 引擎 `minimax-tts`，并提供独立的插件设置页，用于配置模型、声线克隆、voice_id、参考音频语言和提示词约束。
+MiniMax speech-2.x + Qwen3 TTS（DashScope / 百炼）语音合成插件。向 Shinsekai 注册两个 TTS 引擎 `minimax-tts` 和 `qwen-tts`，提供独立的插件设置页，用于配置模型、声音复刻/克隆、voice_id、参考音频语言和提示词约束。
 
 ## 插件信息
 
 | 字段 | 内容 |
 | --- | --- |
 | 插件 ID | `com.shinsekai.cloud_tts` |
-| 版本 | `0.9.7` |
+| 版本 | `0.10.1` |
 | 作者 | `End0rph1nww` |
 | 插件入口 | `plugins.cloud_tts.plugin:CloudTtsPlugin` |
-| TTS 引擎标识 | `minimax-tts` |
+| TTS 引擎标识 | `minimax-tts`、`qwen-tts` |
 | 插件设置页 | `Cloud TTS` |
 
 ## 功能说明
 
-- 通过 `register_tts_adapter` 注册 `minimax-tts` TTS 适配器。
-- 主菜单的 API 设置页只显示 `MiniMax API KEY` 和 `MiniMax Base URL`。
-- MiniMax 的模型、默认 voice_id、角色 voice_id、参考音频语言、提示词约束和语气标签保护，都放在插件设置页维护；基础合成参数使用插件内置默认值。
-- 支持 MiniMax `/t2a_v2`、`/files/upload` 和 `/voice_clone` 接口。
-- voice_id 查找顺序为：角色绑定 voice_id、默认兜底 voice_id、已缓存的克隆 voice_id；需要生成新 voice_id 时，请在角色语音配置里手动上传本地参考音频。
+- 通过 `register_tts_adapter` 注册 `minimax-tts` 和 `qwen-tts` 两个 TTS 适配器。
+- 主菜单的 API 设置页显示当前选中 TTS 引擎的 API KEY 和 Base URL；切换引擎后字段自动切换。
+- **MiniMax**：模型（speech-2.8-hd / speech-2.8-turbo / speech-2.6-hd / speech-2.6-turbo）、默认 voice_id、角色 voice_id、参考音频语言、提示词约束和语气标签保护，均在插件设置页维护。
+- **Qwen3 TTS**：单一 VC 模型 `qwen3-tts-vc-2026-01-22`，合成与声音复刻共用。无系统音色，voice 只能通过声音复刻生成。支持多语种合成（中文、英语、日语、韩语、法语等 10 种语言）。
+- 设置页顶部「TTS Provider 配置」下拉框可独立切换编辑 MiniMax 或 Qwen3 的参数，不影响主 API 页当前选中项。model 和 default_voice_id 按 provider 分别保存到 `api.yaml`。
+- voice_id 查找顺序：角色绑定 voice_id → 默认兜底 voice_id → 已缓存的声音复刻 voice_id。
+- 需要生成新 voice_id 时，在角色语音配置里手动上传本地参考音频：MiniMax 调用 `/voice_clone`，Qwen 调用 `/services/audio/tts/customization`，根据当前 provider 自动选择。
 - TTS 分段功能已由主程序接管（API 设置页「TTS 分句发送」开关），插件不再自行处理分段。
-- 只有当插件启用，并且主程序当前 TTS 引擎已经切到 `minimax-tts` 时，插件才会向模板注入 MiniMax 语气标签约束。
-- 语气标签保护开启时，插件会在主程序清理括号内容前保护 `translate` 里的 MiniMax 标签，避免 `(laughs)`、`(sighs)` 等语气标签在合成前被删除。
-- 提示词模板支持中文、日语、粤语、英语四套固定母版；每个角色也会自动生成四套默认提示词，可在插件设置页按角色选择、修改和保存。模板语言下拉框只用于编辑，不决定运行时注入语言；实际注入语言跟随主程序当前语音语言。
-- 是否使用 MiniMax 作为主 TTS 引擎，完全由主菜单 API 设置页里的 TTS 引擎选择决定；插件设置页内的模型、默认 voice_id、角色 voice_id、参考音频语言和提示词约束开关会在修改时分别自动保存。
-- 当用户在插件面板禁用本插件时，`minimax-tts` 不再注册到主菜单 TTS 列表；如果当前主 TTS 仍是 `minimax-tts`，插件会把它清为 `none`，避免下次启动留下失效入口。
+- 提示词约束和语气标签保护仅对 MiniMax 生效；Qwen 不注入提示词约束，不使用语气标签。
+- 提示词模板支持中文、日语、粤语、英语四套固定母版；每个角色也会自动生成四套默认提示词。运行时注入语言跟随主程序当前语音语言。
+- 关闭插件时，`minimax-tts` 和 `qwen-tts` 均从 TTS 引擎列表移除。
 
 ## 安装方式
 
-把本目录复制到：
+将本目录复制到：
 
 ```text
 plugins/cloud_tts
 ```
 
-然后在 `data/config/plugins.yaml` 中加入：
+在 `data/config/plugins.yaml` 中加入：
 
 ```yaml
 - entry: plugins.cloud_tts.plugin:CloudTtsPlugin
   enabled: true
 ```
 
-修改 `plugins.yaml` 后需要重启 Shinsekai。插件 SDK 只会在程序启动时读取插件清单。
+修改 `plugins.yaml` 后需要重启 Shinsekai。插件 SDK 只在程序启动时读取插件清单。
 
 ## 依赖说明
 
-Shinsekai 主程序原本已经包含插件会用到的基础依赖：
+Shinsekai 主程序已包含的基础依赖：
 
 - `requests`
 - `PySide6`
 - `pyyaml`
 
-本插件额外需要的依赖只有一个，官方根目录 `requirements.txt` 中默认没有：
+本插件额外需要的依赖：
 
-- `imageio-ffmpeg>=0.6.0`
-
-请在 Shinsekai 项目根目录执行：
+- `imageio-ffmpeg>=0.6.0`（仅 MiniMax 声音克隆音频转换需要）
 
 ```bat
 runtime\python.exe -m pip install -r plugins\cloud_tts\requirements.txt
 ```
 
-`imageio-ffmpeg` 会提供一个内置的 `ffmpeg` 可执行文件。插件上传角色参考音频并创建克隆声线时，会用它把音频转换为 MiniMax 可接受的单声道 32000 Hz wav 文件。
-
-如果没有安装 `imageio-ffmpeg`，但参考音频本身已经是 `.mp3`、`.m4a` 或 `.wav`，并且小于等于 20 MB，插件会直接上传该文件。否则声线克隆上传会失败，并提示安装插件依赖。
+`imageio-ffmpeg` 提供内置 `ffmpeg`，用于将参考音频转换为 MiniMax 接受的单声道 32000 Hz wav。Qwen 声音复刻不需要 ffmpeg，直接上传原始音频文件。
 
 ## 配置流程
 
 ### 1. 启用插件并重启
 
-先在 `data/config/plugins.yaml` 中启用插件，然后重启 Shinsekai。
+在 `data/config/plugins.yaml` 中启用插件，重启 Shinsekai。TTS 引擎列表在启动时重建。
 
-TTS 引擎列表是在启动时重建的，所以不重启时，API 设置页里可能看不到 `minimax-tts`。
+### 2. 在主菜单 API 设置页填写凭证
 
-### 2. 先在主菜单 API 设置页填写 API KEY 和 Base URL
+打开主菜单 → API 设置页，在 TTS 区域选择目标引擎：
 
-打开主菜单设置，进入 API 设置页。
+- **MiniMax TTS**：填写 `MiniMax API KEY` 和 `MiniMax Base URL`（默认 `https://api.minimaxi.com/v1`）
+- **Qwen3 TTS**：填写 `DashScope API KEY` 和 `DashScope Base URL`（国内 `https://dashscope.aliyuncs.com/api/v1`，国际 `https://dashscope-intl.aliyuncs.com/api/v1`）
 
-在 TTS 区域选择 MiniMax TTS 引擎。界面上可能显示为 `MiniMax TTS`，内部保存的引擎标识是：
-
-```text
-minimax-tts
-```
-
-选择该引擎后，API 设置页只需要填写两个 MiniMax 字段：
-
-- `MiniMax API KEY`
-- `MiniMax Base URL`
-
-默认 Base URL 是：
-
-```text
-https://api.minimaxi.com/v1
-```
-
-填写后点击 API 设置页底部的保存按钮。这两个字段会写入 `data/config/api.yaml`：
+保存后写入 `data/config/api.yaml`：
 
 ```yaml
 tts_extra_configs:
   minimax-tts:
     api_key: ...
     base_api_url: ...
+  qwen-tts:
+    api_key: ...
+    base_api_url: ...
 ```
 
-插件设置页不会重复显示 API KEY 和 Base URL。这是为了避免同一组连接凭证在两个页面重复配置。
+### 3. 进入 Cloud TTS 插件设置页配置参数
 
-### 3. 再进入 Cloud TTS 插件设置页
+打开插件设置页 `Cloud TTS`，通过顶部「TTS Provider 配置」下拉框切换编辑目标。
 
-打开插件设置页 `Cloud TTS`。
+**MiniMax 配置项**：
+- 模型：`speech-2.8-hd` / `speech-2.8-turbo` / `speech-2.6-hd` / `speech-2.6-turbo`
+- 默认 voice_id：角色未绑定时使用的兜底 voice_id
+- 角色 voice_id：按角色绑定 voice_id，支持多版本历史
+- 参考音频语言：用于 MiniMax 语音克隆时识别语言
+- 功能开关：提示词约束、语气标签保护
+- 提示词模板：中文、日语、粤语、英语四套母版
 
-这里配置 MiniMax 的插件行为：
+**Qwen3 配置项**：
+- 模型：固定 `qwen3-tts-vc-2026-01-22`（合成与声音复刻共用）
+- 默认 voice_id：角色未绑定时使用的兜底 voice_id
+- 角色 voice_id：按角色绑定 voice_id，支持多版本历史
+- 合成语言：中文、英语、日语、韩语、法语等 10 种
 
-- 模型：`speech-2.8-hd`、`speech-2.8-turbo`、`speech-2.6-hd`、`speech-2.6-turbo`、`speech-02-hd` 或 `speech-02-turbo`。
-- 无角色兜底 voice_id：角色没有专用 voice_id 时使用。
-- 参考音频语言：用于 MiniMax 识别参考音频并创建 voice_id；不确定时保持 `auto`。
-- 提示词模板：只提供中文、日语、粤语、英语四套固定默认模板。修改某个角色的对应语言模板后，插件会根据主程序当前选择的语音语言自动注入该语言约束。
+插件设置页不提供全局保存按钮。模型、默认 voice_id、角色 voice_id、本地参考音频、参考音频语言和开关在修改时自动保存。
 
-插件设置页不再提供全局 `保存配置` 按钮。模型、默认 voice_id、角色 voice_id、本地参考音频、参考音频语言和提示词约束开关都会在修改时分别自动保存；提示词模板仍使用模板区里的 `保存当前版本` 按钮保存。
+### 4. 创建 voice_id（声音复刻/克隆）
 
-MiniMax 是否成为主程序实际使用的 TTS 引擎，由主菜单 API 设置页保存后的 TTS 引擎状态决定。也就是说：在主菜单选择 `minimax-tts` 并点击保存后，当前系统提示词和后续生成的模板会自动加入 MiniMax 语气标签约束；如果主菜单切换到 GPT-SoVITS、Genie TTS 或 `none` 并点击保存，当前系统提示词里的 MiniMax 语气标签约束会自动移除。插件设置页内的自动保存不会修改主 TTS 选择，也不会触发系统提示词注入。
+选择角色 → 配置本地参考音频 → 点击上传按钮。插件根据当前 provider 自动选择 API。
 
-如果主聊天进程已经启动，保存后请重启聊天进程，让 TTS adapter 重新读取最新配置。
+**MiniMax 语音克隆**：
+- 源音频要求：mp3 / m4a / wav，时长 10 秒 ~ 5 分钟，不超过 20 MB
+- 建议使用干净、单人、少噪音的人声
+- 参考：[MiniMax Voice Clone](https://platform.minimax.io/docs/guides/speech-voice-clone)
+- 需要 `imageio-ffmpeg` 进行音频转换
 
-### 4. 绑定、导入或创建 voice_id
-
-插件可以通过三种方式获得 voice_id：
-
-- 手动为角色输入或选择 voice_id。
-- 点击 `导入 voice_id JSON`，导入已有 voice_id 文件。
-- 选择角色后，在角色语音配置里为该角色选择 `本地参考音频` 和 `参考音频语言`，再点击 `上传本地参考音频并生成 voice_id`，用该本地音频创建 MiniMax 克隆声线。
-- 如果需要查看角色卡里原本的 `refer_audio_path`，可以点击 `打开角色卡音频位置`；该按钮只用于打开位置，不会自动把角色卡音频作为上传源。
-
-上传参考音频前，必须先在主菜单 API 设置页保存 `MiniMax API KEY`。手动上传只读取 `本地参考音频` 栏位；如果没有配置本地参考音频，插件会提示先选择本地参考音频，不再自动回退到 `characters.yaml` 的 `refer_audio_path`。
-
-MiniMax 官方 Voice Clone 文档对源音频的要求是：格式为 `mp3`、`m4a` 或 `wav`，时长 10 秒到 5 分钟，文件大小不超过 20 MB。建议使用干净、单人、少噪音、少混响的人声。参考：[MiniMax Voice Clone](https://platform.minimax.io/docs/guides/speech-voice-clone)
+**Qwen3 声音复刻**：
+- 直接上传原始音频（mp3 / wav / m4a / flac）
+- 不需要 ffmpeg 转换
+- 生成的 voice_id 同时用于合成和复刻，必须使用同一 VC 模型
+- 参考：[Qwen Voice Cloning](https://www.alibabacloud.com/help/zh/model-studio/voice-cloning-user-guide)
 
 ## 本地数据位置
 
@@ -144,49 +131,35 @@ API KEY 和 Base URL 由主程序保存到：
 data/config/api.yaml
 ```
 
-插件行为设置保存到插件数据目录：
+插件行为设置保存到：
 
 ```text
 data/plugins/com.shinsekai.cloud_tts/config.json
 ```
 
-角色 voice_id 记录保存到：
+按 provider 分目录存储 voice 数据：
 
 ```text
-data/plugins/com.shinsekai.cloud_tts/voices/
+data/plugins/com.shinsekai.cloud_tts/minimax-tts/voices/
+data/plugins/com.shinsekai.cloud_tts/qwen-tts/voices/
 ```
 
-默认 voice_id 保存到：
+默认 voice_id 分别保存在各 provider 目录的 `_defaults.json`。
 
-```text
-data/plugins/com.shinsekai.cloud_tts/voices/_defaults.json
-```
-
-这些 voice_id 文件属于本地运行数据。发布插件包或上传插件仓库时，不要包含这些文件。
-
-旧版本如果把 voice_id 放在 `data/plugins/com.shinsekai.minimax_tts/voices/`、`plugins/minimax_tts/voices/*.json` 或 `plugins/cloud_tts/voices/*.json` 下，插件会在迁移时复制到 `data/plugins/com.shinsekai.cloud_tts/voices/`。迁移只复制缺失文件，不删除旧文件，也不覆盖新目录里已经存在的用户数据。
+旧版共享 `voices/` 目录数据会在首次加载时自动迁移到 `minimax-tts/voices/`。
 
 ## 运行说明
 
-- 默认情况下，合成音频会写入 `cache/audio/`，除非主程序传入了明确的输出路径。
-- adapter 会从主程序 API 设置中的 `tts_extra_configs.minimax-tts` 读取 API KEY 和 Base URL。
-- 插件设置页只保存行为参数，不保存 API KEY 和 Base URL。
-- 禁用插件时，`minimax-tts` 会从主菜单 TTS 引擎列表中消失；如果当前 TTS 引擎仍是 `minimax-tts`，插件会把主 TTS 清为 `none`，避免留下无法注册的旧选择。
-- 修改 `plugins.yaml` 后需要重启 Shinsekai。
-- 修改 API 设置或插件设置后，如果聊天进程已经启动，需要重启聊天进程让 adapter 重新构造。
+- 合成音频写入 `cache/audio/`，除非主程序传入明确输出路径。
+- adapter 从 `tts_extra_configs.{provider_slug}` 读取 API KEY 和 Base URL。
+- 修改 `plugins.yaml` 后需要重启 Shinsekai；修改 API 或插件设置后需要重启聊天进程。
+- 禁用插件时，两个 TTS 引擎均从列表移除；当前引擎若为二者之一则清为 `none`。
 
 ## 常见问题
 
-如果合成日志提示 API KEY 为空，请先到主菜单 API 设置页保存 `MiniMax API KEY`。
-
-如果合成日志提示没有可用 voice_id，请为角色绑定 voice_id、设置默认兜底 voice_id、导入 voice_id JSON，或在角色语音配置里上传本地参考音频生成 voice_id。
-
-如果声线克隆上传提示参考音频需要转换，请安装插件依赖：
-
-```bat
-runtime\python.exe -m pip install -r plugins\cloud_tts\requirements.txt
-```
-
-如果 API 设置页看不到 MiniMax TTS 引擎，请确认 `data/config/plugins.yaml` 已加入插件入口，并重启 Shinsekai。
-
-如果插件设置已经保存，但当前聊天仍使用旧声音，请重启聊天进程，让 TTS adapter 重新读取最新设置。
+- **API KEY 为空**：先到主菜单 API 设置页选择对应 TTS 引擎，填写 API KEY 并保存。
+- **没有可用 voice**：为角色绑定 voice_id、设置默认兜底 voice_id，或上传本地参考音频进行声音复刻/克隆。
+- **MiniMax 音频转换失败**：安装 `imageio-ffmpeg`：`runtime\python.exe -m pip install -r plugins\cloud_tts\requirements.txt`
+- **Qwen 声音复刻 400**：检查 Base URL（国内/国际端点需与合成一致），确认参考音频格式正确。
+- **API 设置页看不到引擎**：确认 `plugins.yaml` 已加入插件入口并重启 Shinsekai。
+- **设置已保存但聊天使用旧声音**：重启聊天进程让 TTS adapter 重新读取配置。

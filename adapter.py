@@ -22,10 +22,6 @@ VALID_MODELS = (
     "speech-2.8-turbo",
     "speech-2.6-hd",
     "speech-2.6-turbo",
-    "speech-02-hd",
-    "speech-02-turbo",
-    "speech-01-hd",
-    "speech-01-turbo",
 )
 VALID_LANGUAGE_BOOSTS = (
     "Chinese",
@@ -357,6 +353,7 @@ class CloudTTSAdapter(TTSAdapter):
                     ),
                 },
                 selected=True,
+                provider_slug=state.PROVIDER_SLUG,
             )
         self._log(
             f"\u58f0\u7ebf\u514b\u9686\u5b8c\u6210\uff0c"

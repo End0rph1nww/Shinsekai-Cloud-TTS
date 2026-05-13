@@ -1,5 +1,24 @@
 # Cloud TTS 插件更新日志
 
+## 0.10.1 (2026-05-15)
+
+- **模型精简**: MiniMax 模型列表移除旧代 speech-02 / speech-01 系列，仅保留 speech-2.8 / speech-2.6 两代；Qwen 模型收束为单一 VC 模型 `qwen3-tts-vc-2026-01-22`，合成与声音复刻统一使用该模型。
+- **编辑视图独立**: 设置页新增「TTS Provider 配置」下拉框，切换编辑 MiniMax / Qwen3 配置不再影响主 API 页当前选中项；model 和 default_voice_id 按 provider 分别写入 api.yaml。
+- **Voice 数据分离**: voice_id_map、voice_id_versions 和 default_voice_id 按 provider 分目录存储（`minimax-tts/voices/` 和 `qwen-tts/voices/`），旧版共享 voice 数据自动迁移到 MiniMax 目录。
+- **声音复刻端点修复**: Qwen 声音复刻跟随用户配置的 Base URL，不再硬编码国内端点，避免国际端点复刻的 voice 在合成时 400 报错。
+- **声音复刻参数修复**: `preferred_name` 改为纯 ASCII 字母格式（映射 hex hash 到字母表），`target_model` 固定使用 VC 模型 `qwen3-tts-vc-2026-01-22`，修复 DashScope API 400 报错。
+- **系统音色移除**: Qwen 设置页移除系统音色下拉框（Cherry、Serena 等 47 种内置音色），voice 统一通过声音复刻生成自定义音色。
+- **文案更新**: 使用说明和错误提示移除系统音色相关描述。
+
+## 0.10.0 (2026-05-15)
+
+- **Qwen3 TTS 接入**: 新增 Qwen3 TTS（DashScope / 百炼）作为第二个 TTS provider，注册为 `qwen-tts`，支持语音合成和声音复刻。
+- **QwenTTSAdapter**: 新增适配器类，通过 DashScope HTTP API 实现 `generate_speech()` 和 `create_cloned_voice_from_file()`。
+- **Qwen 系统音色**: 配置页新增系统音色下拉框，支持 Cherry、Serena、Ethan、Chelsie 等 40+ 种内置音色，无需上传参考音频即可使用。
+- **Qwen 合成语言**: 新增合成语言（language_type）下拉框，支持中文、英语、日语、韩语、法语等 10 种语言。
+- **多 provider 配置页**: 设置页顶部新增「TTS Provider 配置」下拉框，可独立切换编辑 MiniMax 或 Qwen3 的模型和参数，不再依赖主 API 页当前选中项。模型、默认 voice_id 等核心参数按 provider 分别保存到 api.yaml。MiniMax 特有的功能开关（提示词约束、语气标签保护）和提示词模板区仅在 MiniMax 视图下显示。
+- **声音复刻适配**: 上传按钮根据当前 provider 自动选择 MiniMax 语音克隆或 Qwen 声音复刻（voice enrollment）API。
+
 ## 0.9.7 (2026-05-14)
 
 - **设置页布局**: 将模型选择和默认 voice_id 移到设置页上方，进入页面后优先配置核心语音参数。
