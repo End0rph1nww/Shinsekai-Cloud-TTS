@@ -15,7 +15,7 @@ PROVIDER_SLUG = "minimax-tts"
 QWEN_PROVIDER_SLUG = "qwen-tts"
 PLUGIN_ID = "com.shinsekai.cloud_tts"
 PLUGIN_ENTRY = "plugins.cloud_tts.plugin:CloudTtsPlugin"
-PLUGIN_VERSION = "0.10.1"
+PLUGIN_VERSION = "0.10.2"
 
 LEGACY_PROVIDER_SLUG = "cloud-tts"
 LEGACY_PLUGIN_ID = "com.shinsekai.minimax_tts"
@@ -1378,15 +1378,19 @@ def load_voice_stores(provider_slug: str = PROVIDER_SLUG) -> dict[str, dict[str,
     migrate_voice_store_to_provider(provider_slug)
     root = voice_store_root(provider_slug)
     stores: dict[str, dict[str, Any]] = {}
+    file_map: dict[str, list[Path]] = {}
     if not root.is_dir():
         return stores
     for path in sorted(root.glob("*.json")):
+        if path.name == "_defaults.json":
+            continue
         raw = _read_json(path, {})
         if not isinstance(raw, dict):
             continue
         character_name = str(raw.get("character_name") or "").strip()
         if not character_name:
             continue
+        file_map.setdefault(character_name, []).append(path)
         voices: list[dict[str, Any]] = []
         seen: set[str] = set()
         for item in raw.get("voices") or []:
@@ -1401,12 +1405,36 @@ def load_voice_stores(provider_slug: str = PROVIDER_SLUG) -> dict[str, dict[str,
         selected = str(raw.get("selected_voice_id") or "").strip()
         if not selected and voices:
             selected = str(voices[-1].get("voice_id") or "").strip()
-        stores[character_name] = {
-            "character_name": character_name,
-            "selected_voice_id": selected,
-            "voices": voices,
-            "updated_at": int(raw.get("updated_at") or 0),
-        }
+        this_updated = int(raw.get("updated_at") or 0)
+        if character_name in stores:
+            existing = stores[character_name]
+            existing_vids = {str(v.get("voice_id") or "").strip() for v in existing["voices"] if isinstance(v, dict)}
+            for v in voices:
+                if str(v.get("voice_id") or "").strip() not in existing_vids:
+                    existing["voices"].append(v)
+                    existing_vids.add(str(v.get("voice_id") or "").strip())
+            if this_updated > existing["updated_at"]:
+                if selected:
+                    existing["selected_voice_id"] = selected
+                existing["updated_at"] = this_updated
+        else:
+            stores[character_name] = {
+                "character_name": character_name,
+                "selected_voice_id": selected,
+                "voices": voices,
+                "updated_at": this_updated,
+            }
+    # 清理非 canonical 文件名的重复旧文件
+    for character_name, paths in file_map.items():
+        if len(paths) <= 1:
+            continue
+        canonical = voice_file_path(character_name, provider_slug)
+        for p in paths:
+            try:
+                if p.resolve() != canonical.resolve() and p.exists():
+                    p.unlink()
+            except OSError:
+                pass
     return stores
 
 
