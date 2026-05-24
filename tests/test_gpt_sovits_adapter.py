@@ -397,6 +397,8 @@ def test_settings_guide_mentions_gpt_sovits_cloud_usage():
     assert "服务器路径" in settings_text
     assert "GSV 参考音频" in settings_text
     assert "GPT / SoVITS 模型路径" in settings_text
+    assert "/data/models/gpt/hanadan-gpt.ckpt" in settings_text
+    assert "/data/models/sovits/hanadan-sovits.pth" in settings_text
 
 
 def test_docs_explain_gpt_sovits_api_py_and_api_v2_compatibility():
@@ -412,6 +414,8 @@ def test_docs_explain_gpt_sovits_api_py_and_api_v2_compatibility():
     assert "主 API 页 Provider" in readme
     assert "服务端只有 `/set_model`" in readme
     assert "三个 TTS 引擎" in readme
+    assert "/data/models/gpt/hanadan-gpt.ckpt" in readme
+    assert "/data/models/sovits/hanadan-sovits.pth" in readme
 
 
 def test_host_hook_labels_main_api_tts_provider_as_cloud():

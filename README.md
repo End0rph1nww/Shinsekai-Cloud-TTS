@@ -151,6 +151,7 @@ tts_extra_configs:
 **GPT SoVITS Cloud 配置项**：
 - 模式标签：`auto` / `v1-v2-v2Pro` / `v2Pro2025` / `v2ProPlus` / `v3` / `v4` / `custom`，仅用于配置识别，不限制服务器实际模型版本
 - 每角色服务器路径：GPT 权重、SoVITS 权重、参考音频、参考文本、参考语言、文本语言
+- 路径示例：GPT 权重 `/data/models/gpt/hanadan-gpt.ckpt`，SoVITS 权重 `/data/models/sovits/hanadan-sovits.pth`，参考音频 `/data/voices/hanadan.wav`
 - 全局参数：分句方法、输出格式、`sample_steps`、`super_sampling`
 - 不使用 voice_id，也不上传本地音频；参考音频和模型权重由 GPT-SoVITS 服务器按路径读取
 

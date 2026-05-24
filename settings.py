@@ -315,13 +315,13 @@ class CloudTtsSettingsWidget(QWidget):
         voice_lay.addWidget(self.gsv_ref_audio_row)
 
         self.gsv_gpt_weights_path = self._line_edit("")
-        self.gsv_gpt_weights_path.setPlaceholderText("服务器 GPT 权重路径，例如 /data/models/gpt/hanadan.ckpt")
+        self.gsv_gpt_weights_path.setPlaceholderText("服务器 GPT 权重路径，例如 /data/models/gpt/hanadan-gpt.ckpt")
         self.gsv_gpt_weights_path.editingFinished.connect(self._on_gpt_sovits_profile_changed)
         self.gsv_gpt_weights_row = self._row("GSV GPT 模型", self.gsv_gpt_weights_path)
         voice_lay.addWidget(self.gsv_gpt_weights_row)
 
         self.gsv_sovits_weights_path = self._line_edit("")
-        self.gsv_sovits_weights_path.setPlaceholderText("服务器 SoVITS 权重路径，例如 /data/models/sovits/hanadan-s2v4.ckpt")
+        self.gsv_sovits_weights_path.setPlaceholderText("服务器 SoVITS 权重路径，例如 /data/models/sovits/hanadan-sovits.pth")
         self.gsv_sovits_weights_path.editingFinished.connect(self._on_gpt_sovits_profile_changed)
         self.gsv_sovits_weights_row = self._row("GSV SoVITS 模型", self.gsv_sovits_weights_path)
         voice_lay.addWidget(self.gsv_sovits_weights_row)
