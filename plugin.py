@@ -8,6 +8,7 @@ from sdk.register import PluginCapabilityRegistry
 from sdk.types import SettingsUIContribution
 
 from plugins.cloud_tts.adapter import CloudTTSAdapter
+from plugins.cloud_tts.gpt_sovits_adapter import GPTSoVITSApiAdapter
 from plugins.cloud_tts.qwen_adapter import QwenTTSAdapter
 from plugins.cloud_tts import host_hook, prompt_hook, state
 
@@ -28,9 +29,10 @@ class CloudTtsPlugin(PluginBase):
     @property
     def plugin_description(self) -> str:
         return (
-            "Cloud TTS adapter for Shinsekai supporting MiniMax and Qwen3 TTS "
-            "with per-character voice ID binding, reference-audio voice cloning, "
-            "and tone-control prompt helpers."
+            "Cloud TTS adapter for Shinsekai supporting MiniMax, Qwen3 TTS, "
+            "and GPT SoVITS Cloud. Provides per-character voice ID binding, "
+            "reference-audio voice cloning, server-side reference audio and model paths "
+            "for self-hosted GPT-SoVITS, plus tone-control prompt helpers."
         )
 
     @property
@@ -53,6 +55,7 @@ class CloudTtsPlugin(PluginBase):
         prompt_hook.install()
         register.register_tts_adapter(state.PROVIDER_SLUG, CloudTTSAdapter)
         register.register_tts_adapter(state.QWEN_PROVIDER_SLUG, QwenTTSAdapter)
+        register.register_tts_adapter(state.GPT_SOVITS_PROVIDER_SLUG, GPTSoVITSApiAdapter)
         def _build_settings(ctx):
             from plugins.cloud_tts.settings import CloudTtsSettingsWidget
 

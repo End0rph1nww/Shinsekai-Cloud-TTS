@@ -1,5 +1,14 @@
 # Cloud TTS 插件更新日志
 
+## 0.11.0 (2026-05-24)
+
+- **GPT SoVITS Cloud provider**: 新增 `gpt-sovits-api`，面向自部署 GPT-SoVITS `api_v2.py` 服务，支持 `/tts`、`/set_gpt_weights` 和 `/set_sovits_weights`。
+- **legacy API 自动兼容**: 如果服务器启动的是 GPT-SoVITS `api.py`，插件会从 `api_v2.py` 路由自动退回 `POST /set_model` 和 `POST /`，适配仅提供 `/set_model` 的 V2Pro2025 等部署。
+- **多版本模型路径**: 不限制权重文件后缀或 GPT-SoVITS 版本；V1/V2/V2Pro/V2Pro2025/V2ProPlus/V3/V4/自定义模型均按服务器路径传给 API。
+- **角色级 GSV 配置**: 插件设置页可为每个角色单独保存服务器参考音频路径、GPT 权重路径、SoVITS 权重路径、参考文本、参考语言和文本语言。
+- **绕过本地表单校验**: GPT SoVITS Cloud 路径保存在插件私有配置中，不复用主程序角色表单的本地文件/目录字段，避免云端 GSV 部署卡在地址校验。
+- **V4 参数入口**: 设置页新增 GPT-SoVITS 分句、输出格式、`sample_steps` 和 `super_sampling` 配置。
+
 ## 0.10.1 (2026-05-15)
 
 - **模型精简**: MiniMax 模型列表移除旧代 speech-02 / speech-01 系列，仅保留 speech-2.8 / speech-2.6 两代；Qwen 模型收束为单一 VC 模型 `qwen3-tts-vc-2026-01-22`，合成与声音复刻统一使用该模型。

@@ -13,9 +13,10 @@ import yaml
 
 PROVIDER_SLUG = "minimax-tts"
 QWEN_PROVIDER_SLUG = "qwen-tts"
+GPT_SOVITS_PROVIDER_SLUG = "gpt-sovits-api"
 PLUGIN_ID = "com.shinsekai.cloud_tts"
 PLUGIN_ENTRY = "plugins.cloud_tts.plugin:CloudTtsPlugin"
-PLUGIN_VERSION = "0.10.2"
+PLUGIN_VERSION = "0.11.0"
 
 LEGACY_PROVIDER_SLUG = "cloud-tts"
 LEGACY_PLUGIN_ID = "com.shinsekai.minimax_tts"
@@ -39,6 +40,22 @@ PLUGIN_STATE_KEYS = {
     "reference_audio_language_map",
     "auto_prompt_constraint",
     "protect_translate_tone_tags",
+    "gpt_sovits_character_profiles",
+    "gpt_sovits_text_split_method",
+    "gpt_sovits_media_type",
+    "gpt_sovits_streaming_mode",
+    "gpt_sovits_batch_size",
+    "gpt_sovits_batch_threshold",
+    "gpt_sovits_split_bucket",
+    "gpt_sovits_fragment_interval",
+    "gpt_sovits_seed",
+    "gpt_sovits_parallel_infer",
+    "gpt_sovits_repetition_penalty",
+    "gpt_sovits_top_k",
+    "gpt_sovits_top_p",
+    "gpt_sovits_temperature",
+    "gpt_sovits_sample_steps",
+    "gpt_sovits_super_sampling",
 }
 
 # ----------------------------------------------------------------------
@@ -67,8 +84,30 @@ QWEN_VOICE_ENROLLMENT_MODEL = "qwen-voice-enrollment"
 # 声音复刻时 target_model 必须与合成时一致，且必须是 VC 系列模型
 QWEN_VC_MODEL = "qwen3-tts-vc-2026-01-22"
 
+# GPT-SoVITS API constants. api_v2.py is the server entrypoint name; it is not a model-version cap.
+GPT_SOVITS_MODELS = (
+    "auto",
+    "v1-v2-v2Pro",
+    "v2Pro2025",
+    "v2ProPlus",
+    "v3",
+    "v4",
+    "custom",
+)
+GPT_SOVITS_DEFAULT_MODEL = "auto"
+GPT_SOVITS_MEDIA_TYPES = ("wav", "mp3", "ogg", "aac", "raw")
+GPT_SOVITS_LANGUAGE_OPTIONS = (
+    ("auto", "auto"),
+    ("zh", "Chinese"),
+    ("ja", "Japanese"),
+    ("yue", "Cantonese"),
+    ("en", "English"),
+    ("ko", "Korean"),
+)
+GPT_SOVITS_LANGUAGE_CODES = tuple(code for code, _label in GPT_SOVITS_LANGUAGE_OPTIONS if code != "auto")
+
 # 所有 Cloud TTS 支持的 provider slug
-ALL_CLOUD_TTS_SLUGS = frozenset({PROVIDER_SLUG, QWEN_PROVIDER_SLUG})
+ALL_CLOUD_TTS_SLUGS = frozenset({PROVIDER_SLUG, QWEN_PROVIDER_SLUG, GPT_SOVITS_PROVIDER_SLUG})
 
 # 提示词约束块标记：注入时包裹在 system prompt 两端，移除时通过正则匹配这两个标记定位
 CONSTRAINT_START = "<<<CLOUD_TTS_TONE_CONSTRAINT_START>>>"
@@ -952,6 +991,11 @@ def is_qwen_tts_provider(provider: str | None) -> bool:
     return slug == QWEN_PROVIDER_SLUG
 
 
+def is_gpt_sovits_provider(provider: str | None) -> bool:
+    slug = str(provider or "").strip().lower()
+    return slug == GPT_SOVITS_PROVIDER_SLUG
+
+
 def is_any_cloud_tts_provider(provider: str | None) -> bool:
     slug = str(provider or "").strip().lower()
     return slug in ALL_CLOUD_TTS_SLUGS or slug in LEGACY_PROVIDER_SLUGS
@@ -1149,6 +1193,15 @@ def get_qwen_extra() -> dict[str, Any]:
     return dict(cur) if isinstance(cur, dict) else {}
 
 
+def get_gpt_sovits_extra() -> dict[str, Any]:
+    data = load_api_config()
+    all_extra = data.get("tts_extra_configs")
+    if not isinstance(all_extra, dict):
+        return {}
+    cur = all_extra.get(GPT_SOVITS_PROVIDER_SLUG)
+    return dict(cur) if isinstance(cur, dict) else {}
+
+
 def set_cloud_extra(extra: dict[str, Any]) -> None:
     migrate_legacy_api_config()
     data = load_api_config()
@@ -1182,6 +1235,24 @@ def set_qwen_extra(extra: dict[str, Any]) -> None:
     data["tts_extra_configs"] = all_extra
     save_api_config(data)
 
+
+
+
+def set_gpt_sovits_extra(extra: dict[str, Any]) -> None:
+    """Save GPT-SoVITS API adapter connection config to api.yaml."""
+    data = load_api_config()
+    all_extra = data.get("tts_extra_configs")
+    if not isinstance(all_extra, dict):
+        all_extra = {}
+    merged = adapter_config_from_values(dict(all_extra.get(GPT_SOVITS_PROVIDER_SLUG) or {}))
+    incoming = adapter_config_from_values(extra)
+    for key, value in list(incoming.items()):
+        if not str(value or "").strip() and str(merged.get(key) or "").strip():
+            incoming.pop(key, None)
+    merged.update(incoming)
+    all_extra[GPT_SOVITS_PROVIDER_SLUG] = merged
+    data["tts_extra_configs"] = all_extra
+    save_api_config(data)
 
 def adapter_config_from_values(values: dict[str, Any]) -> dict[str, Any]:
     """抽取官方 adapter extra 配置，供 api.yaml 持久化。"""
@@ -1259,6 +1330,7 @@ def remove_cloud_extra() -> None:
         all_extra.pop(PROVIDER_SLUG, None)
         all_extra.pop(LEGACY_PROVIDER_SLUG, None)
         all_extra.pop(QWEN_PROVIDER_SLUG, None)
+        all_extra.pop(GPT_SOVITS_PROVIDER_SLUG, None)
         data["tts_extra_configs"] = all_extra
         save_api_config(data)
 

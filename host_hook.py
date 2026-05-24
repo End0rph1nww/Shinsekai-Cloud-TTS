@@ -8,6 +8,7 @@ from plugins.cloud_tts import state
 
 _PATCHED_ATTR = "_cloud_tts_host_hook"
 _ORIGINAL_ATTR = "_cloud_tts_original"
+_GPT_SOVITS_PROVIDER_LABEL = "GPT SoVITS Cloud"
 
 
 def _clear_main_tts_provider_if_needed() -> None:
@@ -28,6 +29,7 @@ def _remove_runtime_adapter() -> None:
 
         TTSAdapterFactory._adapters.pop(state.PROVIDER_SLUG, None)
         TTSAdapterFactory._adapters.pop(state.QWEN_PROVIDER_SLUG, None)
+        TTSAdapterFactory._adapters.pop(state.GPT_SOVITS_PROVIDER_SLUG, None)
     except Exception:
         pass
 
@@ -70,8 +72,31 @@ def _patch_manifest_setters() -> None:
         pass
 
 
+def _with_gpt_sovits_cloud_label(
+    prefs: tuple[tuple[str, str], ...],
+) -> tuple[tuple[str, str], ...]:
+    out = [
+        (slug, label)
+        for slug, label in prefs
+        if str(slug).lower() != state.GPT_SOVITS_PROVIDER_SLUG
+    ]
+    return ((state.GPT_SOVITS_PROVIDER_SLUG, _GPT_SOVITS_PROVIDER_LABEL), *out)
+
+
+def _patch_api_tab_provider_label() -> None:
+    try:
+        from ui.settings_ui.tabs import api_tab
+
+        prefs = getattr(api_tab, "_TTS_LABEL_PREFS", ())
+        if isinstance(prefs, tuple):
+            api_tab._TTS_LABEL_PREFS = _with_gpt_sovits_cloud_label(prefs)
+    except Exception:
+        pass
+
+
 def install() -> None:
     _patch_manifest_setters()
+    _patch_api_tab_provider_label()
 
 
 def uninstall() -> None:

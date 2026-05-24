@@ -30,6 +30,7 @@ from plugins.cloud_tts.adapter import (
     CloudTTSAdapter,
     VALID_MODELS,
 )
+from plugins.cloud_tts.gpt_sovits_adapter import GPTSoVITSApiAdapter
 from plugins.cloud_tts import state
 
 
@@ -47,6 +48,8 @@ class CloudTtsSettingsWidget(QWidget):
         self._voice_id_versions: dict[str, list[dict[str, Any]]] = {}
         self._local_reference_audio_map: dict[str, str] = {}
         self._reference_audio_language_map: dict[str, str] = {}
+        self._gpt_sovits_character_profiles: dict[str, dict[str, str]] = {}
+        self._gpt_sovits_extra_state: dict[str, Any] = {}
         self._current_voice_character_name = ""
         self._current_template_character_name = ""
         self._prompt_constraint_enabled = False
@@ -54,7 +57,9 @@ class CloudTtsSettingsWidget(QWidget):
         self._loading_values = True
         # 默认编辑主 API 页当前选中的 provider
         cur = state.current_tts_provider()
-        if state.is_qwen_tts_provider(cur):
+        if state.is_gpt_sovits_provider(cur):
+            self._edit_provider_slug = state.GPT_SOVITS_PROVIDER_SLUG
+        elif state.is_qwen_tts_provider(cur):
             self._edit_provider_slug = state.QWEN_PROVIDER_SLUG
         else:
             self._edit_provider_slug = state.PROVIDER_SLUG
@@ -74,26 +79,37 @@ class CloudTtsSettingsWidget(QWidget):
     def _is_minimax_active(self) -> bool:
         return self._edit_provider_slug == state.PROVIDER_SLUG
 
+    def _is_gpt_sovits_active(self) -> bool:
+        return self._edit_provider_slug == state.GPT_SOVITS_PROVIDER_SLUG
+
     def _current_provider_model_options(self) -> tuple[str, ...]:
         if self._is_qwen_active():
             return state.QWEN_MODELS
+        if self._is_gpt_sovits_active():
+            return state.GPT_SOVITS_MODELS
         return VALID_MODELS
 
     def _current_provider_default_model(self) -> str:
         if self._is_qwen_active():
             return state.QWEN_DEFAULT_MODEL
+        if self._is_gpt_sovits_active():
+            return state.GPT_SOVITS_DEFAULT_MODEL
         return "speech-2.8-hd"
 
     def _provider_extra(self) -> dict[str, Any]:
         """返回当前编辑中 provider 的 api.yaml extra 配置。"""
         if self._is_qwen_active():
             return state.get_qwen_extra()
+        if self._is_gpt_sovits_active():
+            return state.get_gpt_sovits_extra()
         return state.get_cloud_extra()
 
     def _save_provider_extra(self, values: dict[str, Any]) -> None:
         """保存 model / default_voice_id 等到当前 provider 的 api.yaml extra。"""
         if self._is_qwen_active():
             state.set_qwen_extra(values)
+        elif self._is_gpt_sovits_active():
+            state.set_gpt_sovits_extra(values)
         else:
             state.set_cloud_extra(values)
 
@@ -123,6 +139,7 @@ class CloudTtsSettingsWidget(QWidget):
         self.edit_provider = self._combo()
         self.edit_provider.addItem("MiniMax TTS", state.PROVIDER_SLUG)
         self.edit_provider.addItem("Qwen3 TTS", state.QWEN_PROVIDER_SLUG)
+        self.edit_provider.addItem("GPT SoVITS Cloud", state.GPT_SOVITS_PROVIDER_SLUG)
         self.edit_provider.currentIndexChanged.connect(self._on_edit_provider_changed)
         provider_lay.addWidget(self._row("当前编辑", self.edit_provider))
         root.addWidget(provider_box)
@@ -141,7 +158,8 @@ class CloudTtsSettingsWidget(QWidget):
         self.default_voice_id.lineEdit().editingFinished.connect(
             self._on_default_voice_changed
         )
-        api_lay.addWidget(self._row("默认 voice_id", self.default_voice_id))
+        self.default_voice_id_row = self._row("默认 voice_id", self.default_voice_id)
+        api_lay.addWidget(self.default_voice_id_row)
 
         # Qwen 特有：合成语言
         self.qwen_language_type = self._combo()
@@ -152,6 +170,32 @@ class CloudTtsSettingsWidget(QWidget):
         )
         self.qwen_language_type_row = self._row("合成语言", self.qwen_language_type)
         api_lay.addWidget(self.qwen_language_type_row)
+
+        self.gsv_text_split_method = self._line_edit("cut5")
+        self.gsv_text_split_method.setPlaceholderText("cut5 / cut0 / cut1 / cut2 / custom")
+        self.gsv_text_split_method.editingFinished.connect(self._on_gpt_sovits_option_changed)
+        self.gsv_text_split_method_row = self._row("GSV 分句", self.gsv_text_split_method)
+        api_lay.addWidget(self.gsv_text_split_method_row)
+
+        self.gsv_media_type = self._combo()
+        for item in state.GPT_SOVITS_MEDIA_TYPES:
+            self.gsv_media_type.addItem(item, item)
+        self.gsv_media_type.currentIndexChanged.connect(lambda _index: self._on_gpt_sovits_option_changed())
+        self.gsv_media_type_row = self._row("GSV 格式", self.gsv_media_type)
+        api_lay.addWidget(self.gsv_media_type_row)
+
+        self.gsv_sample_steps = self._line_edit("32")
+        self.gsv_sample_steps.setPlaceholderText("V3/V4 可用，例如 32")
+        self.gsv_sample_steps.editingFinished.connect(self._on_gpt_sovits_option_changed)
+        self.gsv_sample_steps_row = self._row("GSV steps", self.gsv_sample_steps)
+        api_lay.addWidget(self.gsv_sample_steps_row)
+
+        self.gsv_super_sampling = self._combo()
+        self.gsv_super_sampling.addItem("关闭", False)
+        self.gsv_super_sampling.addItem("开启", True)
+        self.gsv_super_sampling.currentIndexChanged.connect(lambda _index: self._on_gpt_sovits_option_changed())
+        self.gsv_super_sampling_row = self._row("GSV 超采样", self.gsv_super_sampling)
+        api_lay.addWidget(self.gsv_super_sampling_row)
 
         root.addWidget(api_box)
 
@@ -216,7 +260,8 @@ class CloudTtsSettingsWidget(QWidget):
         local_ref_lay.addWidget(self.local_ref_path, stretch=1)
         local_ref_lay.addWidget(self.choose_local_ref_btn)
         local_ref_lay.addWidget(self.clear_local_ref_btn)
-        voice_lay.addWidget(self._row("本地参考音频", local_ref_field))
+        self.local_ref_row = self._row("本地参考音频", local_ref_field)
+        voice_lay.addWidget(self.local_ref_row)
 
         self.reference_audio_language = self._combo()
         reference_language_options = (
@@ -231,7 +276,8 @@ class CloudTtsSettingsWidget(QWidget):
         self.reference_audio_language.currentIndexChanged.connect(
             lambda _index: self._on_reference_audio_language_changed()
         )
-        voice_lay.addWidget(self._row("参考音频语言", self.reference_audio_language))
+        self.reference_audio_language_row = self._row("参考音频语言", self.reference_audio_language)
+        voice_lay.addWidget(self.reference_audio_language_row)
 
         self.character_voice_id = self._voice_combo()
         self.character_voice_id.lineEdit().setPlaceholderText("该角色专用 voice_id")
@@ -241,7 +287,8 @@ class CloudTtsSettingsWidget(QWidget):
         self.character_voice_id.lineEdit().editingFinished.connect(
             self._on_character_voice_changed
         )
-        voice_lay.addWidget(self._row("角色 voice_id", self.character_voice_id))
+        self.character_voice_id_row = self._row("角色 voice_id", self.character_voice_id)
+        voice_lay.addWidget(self.character_voice_id_row)
 
         self.upload_btn = QPushButton("上传本地参考音频并生成 voice_id")
         self.upload_btn.setFixedHeight(FIELD_HEIGHT)
@@ -258,7 +305,46 @@ class CloudTtsSettingsWidget(QWidget):
         voice_actions_lay.setSpacing(8)
         voice_actions_lay.addWidget(self.upload_btn, stretch=1)
         voice_actions_lay.addWidget(self.import_voice_btn)
+        self.voice_actions_row = voice_actions
         voice_lay.addWidget(voice_actions)
+
+        self.gsv_ref_audio_path = self._line_edit("")
+        self.gsv_ref_audio_path.setPlaceholderText("服务器参考音频路径，例如 /data/voices/hanadan.wav")
+        self.gsv_ref_audio_path.editingFinished.connect(self._on_gpt_sovits_profile_changed)
+        self.gsv_ref_audio_row = self._row("GSV 参考音频", self.gsv_ref_audio_path)
+        voice_lay.addWidget(self.gsv_ref_audio_row)
+
+        self.gsv_gpt_weights_path = self._line_edit("")
+        self.gsv_gpt_weights_path.setPlaceholderText("服务器 GPT 权重路径，例如 /data/models/gpt/hanadan.ckpt")
+        self.gsv_gpt_weights_path.editingFinished.connect(self._on_gpt_sovits_profile_changed)
+        self.gsv_gpt_weights_row = self._row("GSV GPT 模型", self.gsv_gpt_weights_path)
+        voice_lay.addWidget(self.gsv_gpt_weights_row)
+
+        self.gsv_sovits_weights_path = self._line_edit("")
+        self.gsv_sovits_weights_path.setPlaceholderText("服务器 SoVITS 权重路径，例如 /data/models/sovits/hanadan-s2v4.ckpt")
+        self.gsv_sovits_weights_path.editingFinished.connect(self._on_gpt_sovits_profile_changed)
+        self.gsv_sovits_weights_row = self._row("GSV SoVITS 模型", self.gsv_sovits_weights_path)
+        voice_lay.addWidget(self.gsv_sovits_weights_row)
+
+        self.gsv_prompt_text = self._line_edit("")
+        self.gsv_prompt_text.setPlaceholderText("参考音频对应文本")
+        self.gsv_prompt_text.editingFinished.connect(self._on_gpt_sovits_profile_changed)
+        self.gsv_prompt_text_row = self._row("GSV 参考文本", self.gsv_prompt_text)
+        voice_lay.addWidget(self.gsv_prompt_text_row)
+
+        self.gsv_prompt_lang = self._combo()
+        for code, label in state.GPT_SOVITS_LANGUAGE_OPTIONS:
+            self.gsv_prompt_lang.addItem(label, code)
+        self.gsv_prompt_lang.currentIndexChanged.connect(lambda _index: self._on_gpt_sovits_profile_changed())
+        self.gsv_prompt_lang_row = self._row("GSV 参考语言", self.gsv_prompt_lang)
+        voice_lay.addWidget(self.gsv_prompt_lang_row)
+
+        self.gsv_text_lang = self._combo()
+        for code, label in state.GPT_SOVITS_LANGUAGE_OPTIONS:
+            self.gsv_text_lang.addItem(label, code)
+        self.gsv_text_lang.currentIndexChanged.connect(lambda _index: self._on_gpt_sovits_profile_changed())
+        self.gsv_text_lang_row = self._row("GSV 文本语言", self.gsv_text_lang)
+        voice_lay.addWidget(self.gsv_text_lang_row)
 
         root.addWidget(voice_box)
 
@@ -347,16 +433,21 @@ class CloudTtsSettingsWidget(QWidget):
         lay.addWidget(title)
 
         body = QLabel(
-            "<b>1. 前置条件：</b>先在首页 / 主菜单 API 设置页选择 MiniMax TTS 或 Qwen3 TTS，填写对应 API KEY 和 BASE URL 并保存。"
+            "<b>1. 前置条件：</b>先在首页 / 主菜单 API 设置页选择 MiniMax TTS、Qwen3 TTS 或 GPT SoVITS Cloud，填写对应 API KEY 和 BASE URL 并保存。"
             "本页不重复保存连接凭证。<br/><br/>"
             "<b>2. MiniMax 模式：</b>建议开启<b>提示词约束</b>和<b>语气标签保护</b>，让 translate 字段的语气标签不被打断。"
             "TTS 分段功能已由主程序接管，请在 API 设置页配置「TTS 分句发送」。<br/><br/>"
             "<b>3. Qwen3 TTS 模式：</b>通过<b>声音复刻</b>上传参考音频创建自定义音色，"
             "合成和复刻均使用 qwen3-tts-vc 模型。支持多语种合成。<br/><br/>"
-            "<b>4. 角色 voice_id：</b>选择角色后在下拉框中选择或粘贴 voice_id，支持多版本历史管理。"
+            "<b>4. GPT SoVITS Cloud 模式：</b>在主 API 页填写 Base URL / Token，"
+            "在本页按角色填写 GSV 参考音频和 GPT / SoVITS 模型路径。"
+            "这些都是 GPT SoVITS Cloud 服务器路径，不走主程序本地文件校验。"
+            "插件会优先使用 api_v2.py 的 /tts、/set_gpt_weights、/set_sovits_weights；"
+            "如果服务器只有 api.py 的 /set_model，会自动退回 legacy 调用。<br/><br/>"
+            "<b>5. 角色 voice_id：</b>选择角色后在下拉框中选择或粘贴 voice_id，支持多版本历史管理。"
             "也可选择本地参考音频后上传克隆/复刻 voice_id；"
             "结果缓存在 <code>data/plugins/com.shinsekai.cloud_tts/voices/</code>。<br/><br/>"
-            "<b>5. 提示词模板（仅 MiniMax）：</b>「默认模板」内置中文、日语、粤语、英语四套母版；每个角色首次打开也会自动生成四套同语种默认提示词。"
+            "<b>6. 提示词模板（仅 MiniMax）：</b>「默认模板」内置中文、日语、粤语、英语四套母版；每个角色首次打开也会自动生成四套同语种默认提示词。"
         )
         body.setWordWrap(True)
         body.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
@@ -484,11 +575,32 @@ class CloudTtsSettingsWidget(QWidget):
         """根据当前选中的 TTS provider 切换可见的 UI 区块。"""
         is_qwen = self._is_qwen_active()
         is_minimax = self._is_minimax_active()
-        # Qwen 特有控件
+        is_gsv = self._is_gpt_sovits_active()
         self.qwen_language_type_row.setVisible(is_qwen)
-        # MiniMax 特有区块
+        self.default_voice_id_row.setVisible(not is_gsv)
+        self.gsv_text_split_method_row.setVisible(is_gsv)
+        self.gsv_media_type_row.setVisible(is_gsv)
+        self.gsv_sample_steps_row.setVisible(is_gsv)
+        self.gsv_super_sampling_row.setVisible(is_gsv)
+        self.local_ref_row.setVisible(not is_gsv)
+        self.reference_audio_language_row.setVisible(not is_gsv)
+        self.character_voice_id_row.setVisible(not is_gsv)
+        self.voice_actions_row.setVisible(not is_gsv)
+        self.gsv_ref_audio_row.setVisible(is_gsv)
+        self.gsv_gpt_weights_row.setVisible(is_gsv)
+        self.gsv_sovits_weights_row.setVisible(is_gsv)
+        self.gsv_prompt_text_row.setVisible(is_gsv)
+        self.gsv_prompt_lang_row.setVisible(is_gsv)
+        self.gsv_text_lang_row.setVisible(is_gsv)
         self.switch_box.setVisible(is_minimax)
         self.template_box.setVisible(is_minimax)
+
+    def _provider_label(self) -> str:
+        if self._is_qwen_active():
+            return "Qwen3 TTS"
+        if self._is_gpt_sovits_active():
+            return "GPT SoVITS Cloud"
+        return "MiniMax TTS"
 
     def _on_edit_provider_changed(self) -> None:
         """用户手动切换插件页的 provider 编辑视图。"""
@@ -497,25 +609,28 @@ class CloudTtsSettingsWidget(QWidget):
         new_slug = self.edit_provider.currentData()
         if not new_slug or new_slug == self._edit_provider_slug:
             return
-        # 保存当前编辑的 model/default_voice_id/voice 数据到旧 provider
         self._store_current_character_voice_id()
-        self._save_provider_extra({
-            "model": str(self.model.currentData() or ""),
-            "default_voice_id": self._combo_voice_id(self.default_voice_id),
-            "language_type": str(self.qwen_language_type.currentData() or "Chinese") if self._is_qwen_active() else "",
-        })
-        state.save_voice_config_to_files(
-            dict(self._voice_id_map),
-            dict(self._voice_id_versions),
-            provider_slug=self._edit_provider_slug,
-        )
-        # 切换到新 provider
+        self._store_current_gpt_sovits_profile()
+        extra = {"model": str(self.model.currentData() or "")}
+        if not self._is_gpt_sovits_active():
+            extra["default_voice_id"] = self._combo_voice_id(self.default_voice_id)
+        if self._is_qwen_active():
+            extra["language_type"] = str(self.qwen_language_type.currentData() or "Chinese")
+        self._save_provider_extra(extra)
+        if not self._is_gpt_sovits_active():
+            state.save_voice_config_to_files(
+                dict(self._voice_id_map),
+                dict(self._voice_id_versions),
+                provider_slug=self._edit_provider_slug,
+            )
         self._edit_provider_slug = new_slug
-        # 重新加载 voice 数据
         cfg = state.load_plugin_config(self._plugin_root, self._edit_provider_slug)
         self._voice_id_map = self._coerce_voice_id_map(cfg.get("voice_id_map"))
         self._voice_id_versions = self._coerce_voice_id_versions(cfg.get("voice_id_versions"))
-        # 刷新模型列表并加载新 provider 的配置
+        self._gpt_sovits_extra_state = self._gpt_sovits_state_from_config(cfg)
+        self._gpt_sovits_character_profiles = self._coerce_gpt_sovits_profiles(
+            cfg.get("gpt_sovits_character_profiles")
+        )
         self._refresh_model_options()
         extra = self._provider_extra()
         model_value = extra.get("model", self._current_provider_default_model())
@@ -526,12 +641,11 @@ class CloudTtsSettingsWidget(QWidget):
         lang = extra.get("language_type", "Chinese")
         self._set_combo(self.qwen_language_type, lang)
         self._update_provider_visibility()
-        # 刷新当前角色的 voice 选项
         char = self.character_combo.currentText().strip()
         if char:
             self._refresh_character_voice_options(char)
-        provider_label = "Qwen3 TTS" if self._is_qwen_active() else "MiniMax TTS"
-        self.status.setText(f"已切换到 {provider_label} 配置视图。")
+            self._sync_gpt_sovits_profile_label()
+        self.status.setText(f"已切换到 {self._provider_label()} 配置视图。")
 
     def _refresh_model_options(self) -> None:
         """根据当前选中的 TTS provider 刷新模型下拉框。"""
@@ -547,18 +661,23 @@ class CloudTtsSettingsWidget(QWidget):
         lang = self.qwen_language_type.currentData()
         self._save(f"Qwen 合成语言已切换为 {lang or 'auto'}。")
 
+    def _on_gpt_sovits_option_changed(self) -> None:
+        if self._loading_values:
+            return
+        self._save("GPT SoVITS Cloud 参数已更新。")
+
     def _on_model_changed(self) -> None:
         if self._loading_values:
             return
         self._save(f"模型已切换为 {self.model.currentData()}。")
 
     def _on_default_voice_changed(self) -> None:
-        if self._loading_values:
+        if self._loading_values or self._is_gpt_sovits_active():
             return
         self._save("默认 voice_id 已更新。")
 
     def _on_character_voice_changed(self) -> None:
-        if self._loading_values:
+        if self._loading_values or self._is_gpt_sovits_active():
             return
         self._store_current_character_voice_id()
         self._save("当前角色 voice_id 已更新。")
@@ -608,6 +727,14 @@ class CloudTtsSettingsWidget(QWidget):
         self._reference_audio_language_map = state.coerce_voice_language_map(
             values.get("reference_audio_language_map")
         )
+        self._gpt_sovits_extra_state = self._gpt_sovits_state_from_config(values)
+        self._gpt_sovits_character_profiles = self._coerce_gpt_sovits_profiles(
+            values.get("gpt_sovits_character_profiles")
+        )
+        self.gsv_text_split_method.setText(str(values.get("gpt_sovits_text_split_method") or "cut5"))
+        self._set_combo(self.gsv_media_type, str(values.get("gpt_sovits_media_type") or "wav"))
+        self.gsv_sample_steps.setText(str(values.get("gpt_sovits_sample_steps") or "32"))
+        self._set_combo(self.gsv_super_sampling, self._as_bool(values.get("gpt_sovits_super_sampling"), False))
         self._ensure_versions_from_selected_map()
         self._refresh_default_voice_options(str(values.get("default_voice_id") or ""))
         self._prompt_constraint_enabled = self._as_bool(
@@ -709,6 +836,7 @@ class CloudTtsSettingsWidget(QWidget):
         self.reference_audio_language.blockSignals(False)
 
     def _reload_characters(self) -> None:
+        self._store_current_gpt_sovits_profile()
         self._store_current_local_reference_audio()
         self._store_current_reference_audio_language()
         current = self.character_combo.currentText()
@@ -726,6 +854,7 @@ class CloudTtsSettingsWidget(QWidget):
         self.character_combo.blockSignals(False)
         self._current_voice_character_name = self.character_combo.currentText().strip()
         self._sync_reference_label()
+        self._sync_gpt_sovits_profile_label()
         self._refresh_template_characters()
 
     def _selected_character(self) -> dict[str, Any] | None:
@@ -743,10 +872,12 @@ class CloudTtsSettingsWidget(QWidget):
         self.local_ref_path.blockSignals(False)
         self._refresh_character_voice_options(name)
         self._refresh_reference_audio_language(name)
+        self._sync_gpt_sovits_profile_label()
 
     def _on_character_changed(self, _index: int) -> None:
         self._store_local_reference_audio_for_name(self._current_voice_character_name)
         self._store_reference_audio_language_for_name(self._current_voice_character_name)
+        self._store_gpt_sovits_profile_for_name(self._current_voice_character_name)
         self._current_voice_character_name = self.character_combo.currentText().strip()
         self._sync_reference_label()
 
@@ -837,6 +968,8 @@ class CloudTtsSettingsWidget(QWidget):
         return None, "本地参考音频"
 
     def _store_current_character_voice_id(self) -> None:
+        if self._is_gpt_sovits_active():
+            return
         name = self.character_combo.currentText().strip()
         if not name:
             return
@@ -847,6 +980,114 @@ class CloudTtsSettingsWidget(QWidget):
         else:
             self._voice_id_map.pop(name, None)
         self._refresh_default_voice_options()
+
+    def _on_gpt_sovits_profile_changed(self) -> None:
+        if self._loading_values:
+            return
+        self._store_current_gpt_sovits_profile()
+        self._save("当前角色 GPT SoVITS Cloud 配置已更新。")
+
+    def _store_current_gpt_sovits_profile(self) -> None:
+        self._store_gpt_sovits_profile_for_name(self.character_combo.currentText().strip())
+
+    def _store_gpt_sovits_profile_for_name(self, character_name: str) -> None:
+        name = (character_name or "").strip()
+        if not name or not hasattr(self, "gsv_ref_audio_path"):
+            return
+        profile = self._gpt_sovits_profile_from_fields()
+        if profile:
+            self._gpt_sovits_character_profiles[name] = profile
+        else:
+            self._gpt_sovits_character_profiles.pop(name, None)
+
+    def _sync_gpt_sovits_profile_label(self) -> None:
+        if not hasattr(self, "gsv_ref_audio_path"):
+            return
+        name = self.character_combo.currentText().strip()
+        profile = self._gpt_sovits_character_profiles.get(name, {})
+        fields = (
+            (self.gsv_ref_audio_path, profile.get("ref_audio_path", "")),
+            (self.gsv_gpt_weights_path, profile.get("gpt_weights_path", "")),
+            (self.gsv_sovits_weights_path, profile.get("sovits_weights_path", "")),
+            (self.gsv_prompt_text, profile.get("prompt_text", "")),
+        )
+        for field, value in fields:
+            field.blockSignals(True)
+            field.setText(str(value or ""))
+            field.blockSignals(False)
+        self.gsv_prompt_lang.blockSignals(True)
+        self._set_combo(self.gsv_prompt_lang, profile.get("prompt_lang", "auto"))
+        self.gsv_prompt_lang.blockSignals(False)
+        self.gsv_text_lang.blockSignals(True)
+        self._set_combo(self.gsv_text_lang, profile.get("text_lang", "auto"))
+        self.gsv_text_lang.blockSignals(False)
+
+    def _gpt_sovits_profile_from_fields(self) -> dict[str, str]:
+        prompt_lang = str(self.gsv_prompt_lang.currentData() or "auto")
+        text_lang = str(self.gsv_text_lang.currentData() or "auto")
+        profile = {
+            "ref_audio_path": self.gsv_ref_audio_path.text().strip(),
+            "gpt_weights_path": self.gsv_gpt_weights_path.text().strip(),
+            "sovits_weights_path": self.gsv_sovits_weights_path.text().strip(),
+            "prompt_text": self.gsv_prompt_text.text().strip(),
+            "prompt_lang": "" if prompt_lang == "auto" else prompt_lang,
+            "text_lang": "" if text_lang == "auto" else text_lang,
+        }
+        return {k: v for k, v in profile.items() if v}
+
+    def _gpt_sovits_state_from_config(self, values: dict[str, Any]) -> dict[str, Any]:
+        keys = {
+            "gpt_sovits_character_profiles",
+            "gpt_sovits_text_split_method",
+            "gpt_sovits_media_type",
+            "gpt_sovits_streaming_mode",
+            "gpt_sovits_batch_size",
+            "gpt_sovits_batch_threshold",
+            "gpt_sovits_split_bucket",
+            "gpt_sovits_fragment_interval",
+            "gpt_sovits_seed",
+            "gpt_sovits_parallel_infer",
+            "gpt_sovits_repetition_penalty",
+            "gpt_sovits_top_k",
+            "gpt_sovits_top_p",
+            "gpt_sovits_temperature",
+            "gpt_sovits_sample_steps",
+            "gpt_sovits_super_sampling",
+        }
+        return {k: values[k] for k in keys if k in values}
+
+    def _coerce_gpt_sovits_profiles(self, value: Any) -> dict[str, dict[str, str]]:
+        if isinstance(value, str):
+            try:
+                value = json.loads(value)
+            except Exception:
+                try:
+                    value = ast.literal_eval(value)
+                except Exception:
+                    value = {}
+        if not isinstance(value, dict):
+            return {}
+        out: dict[str, dict[str, str]] = {}
+        keys = {
+            "ref_audio_path",
+            "gpt_weights_path",
+            "sovits_weights_path",
+            "prompt_text",
+            "prompt_lang",
+            "text_lang",
+        }
+        for key, item in value.items():
+            name = str(key or "").strip()
+            if not name or not isinstance(item, dict):
+                continue
+            profile = {}
+            for field in keys:
+                text_value = str(item.get(field) or "").strip()
+                if text_value:
+                    profile[field] = text_value
+            if profile:
+                out[name] = profile
+        return out
 
     def _coerce_voice_id_map(self, value: Any) -> dict[str, str]:
         if isinstance(value, str):
@@ -953,6 +1194,7 @@ class CloudTtsSettingsWidget(QWidget):
         self._store_current_character_voice_id()
         self._store_current_local_reference_audio()
         self._store_current_reference_audio_language()
+        self._store_current_gpt_sovits_profile()
         default_model = self._current_provider_default_model()
         result = {
             "model": str(self.model.currentData() or default_model),
@@ -964,6 +1206,14 @@ class CloudTtsSettingsWidget(QWidget):
             "auto_prompt_constraint": self._prompt_constraint_enabled,
             "protect_translate_tone_tags": self._tone_tag_protection_enabled,
         }
+        result.update(dict(self._gpt_sovits_extra_state))
+        result.update({
+            "gpt_sovits_character_profiles": dict(self._gpt_sovits_character_profiles),
+            "gpt_sovits_text_split_method": self.gsv_text_split_method.text().strip() or "cut5",
+            "gpt_sovits_media_type": str(self.gsv_media_type.currentData() or "wav"),
+            "gpt_sovits_sample_steps": self.gsv_sample_steps.text().strip() or "32",
+            "gpt_sovits_super_sampling": bool(self.gsv_super_sampling.currentData()),
+        })
         if self._is_qwen_active():
             result["qwen_language_type"] = str(self.qwen_language_type.currentData() or "Chinese")
         return result
@@ -976,6 +1226,10 @@ class CloudTtsSettingsWidget(QWidget):
             values.update(state.get_qwen_extra())
             values["use_runtime_config"] = False
             return QwenTTSAdapter(**values)
+        if self._is_gpt_sovits_active():
+            values.update(state.get_gpt_sovits_extra())
+            values["use_runtime_config"] = False
+            return GPTSoVITSApiAdapter(**values)
         values.update(state.get_cloud_extra())
         values["use_runtime_config"] = False
         return CloudTTSAdapter(**values)
@@ -984,19 +1238,18 @@ class CloudTtsSettingsWidget(QWidget):
         if self._loading_values:
             return
         self._store_current_character_voice_id()
+        self._store_current_gpt_sovits_profile()
         values = self._values()
         state.suppress_prompt_constraint()
-        # 插件页保存行为参数到插件数据目录。
         state.save_plugin_config(self._plugin_root, values, self._edit_provider_slug)
-        # 当前编辑 provider 的 model / default_voice_id 等写入 api.yaml extra。
         provider_extra = {
             "model": str(self.model.currentData() or ""),
-            "default_voice_id": self._combo_voice_id(self.default_voice_id),
         }
+        if not self._is_gpt_sovits_active():
+            provider_extra["default_voice_id"] = self._combo_voice_id(self.default_voice_id)
         if self._is_qwen_active():
             provider_extra["language_type"] = str(self.qwen_language_type.currentData() or "Chinese")
         self._save_provider_extra(provider_extra)
-        # 不刷新主 ConfigManager，避免插件页保存时连带触发模板页生成 Prompt。
         self.status.setText(status_message or "插件设置已保存。")
 
     def _import_voice_ids(self) -> None:
@@ -1441,6 +1694,13 @@ class CloudTtsSettingsWidget(QWidget):
         char = self._selected_character()
         if not char:
             QMessageBox.warning(self, "Cloud TTS", "没有选中的角色。")
+            return
+        if self._is_gpt_sovits_active():
+            QMessageBox.information(
+                self,
+                "Cloud TTS",
+                "GPT SoVITS Cloud 使用服务器已有音频和模型路径；请直接填写当前角色的 GSV 路径。",
+            )
             return
         self._store_current_local_reference_audio()
         self._store_current_reference_audio_language()
