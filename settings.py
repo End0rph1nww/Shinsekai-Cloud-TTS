@@ -48,6 +48,7 @@ VOICE_ID_EXPORT_EXCLUDED_KEYS = {
     "name",
     "selected_voice_id",
     "type",
+    "imported_from",
     "reference_audio_path",
     "local_reference_audio_path",
     "ref_audio_path",

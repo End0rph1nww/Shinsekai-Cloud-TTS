@@ -36,6 +36,7 @@ def test_voice_id_export_button_writes_single_voice_payload():
     assert "VOICE_ID_EXPORT_EXCLUDED_KEYS" in source
     assert '"reference_audio_path"' in source
     assert '"character_name",' in source
+    assert '"imported_from",' in source
     assert '"type": "cloud_tts.voice_id"' in payload_source
     assert '"character_name": character_name' in payload_source
     assert '"voice_id": voice_id' in payload_source
