@@ -9,6 +9,7 @@ import subprocess
 import time
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 import requests
 
@@ -97,6 +98,7 @@ class CloudTTSAdapter(TTSAdapter):
         voice_id_versions: dict[str, Any] | str | None = None,
         voice_language_map: dict[str, Any] | str | None = None,
         voice_cache_path: str = "cache/audio/cloud_tts_voice_cache.json",
+        clone_demo_audio_dir: str = "cache/audio/cloud_tts_clone_demo",
         local_reference_audio_map: dict[str, str] | str | None = None,
         reference_audio_language_map: dict[str, Any] | str | None = None,
         language_boost: str = "auto",
@@ -148,6 +150,7 @@ class CloudTTSAdapter(TTSAdapter):
         self.voice_id_versions = voice_id_versions
         self.voice_language_map = state.coerce_voice_language_map(voice_language_map)
         self.voice_cache_path = state.project_path(voice_cache_path)
+        self.clone_demo_audio_dir = state.project_path(clone_demo_audio_dir)
         self.local_reference_audio_map = self._coerce_local_reference_audio_map(
             local_reference_audio_map
         )
@@ -167,6 +170,8 @@ class CloudTTSAdapter(TTSAdapter):
         self.auto_clone_from_reference = bool(auto_clone_from_reference)
         self.need_noise_reduction = bool(need_noise_reduction)
         self.need_volume_normalization = bool(need_volume_normalization)
+        self.last_clone_demo_audio_url = ""
+        self.last_clone_demo_audio_path = ""
 
     @classmethod
     def get_config_schema(cls) -> dict[str, dict]:
@@ -311,6 +316,8 @@ class CloudTTSAdapter(TTSAdapter):
             raise FileNotFoundError(str(path))
         chosen_voice_id = self._normalize_voice_id(voice_id) if voice_id else self._new_voice_id(path, character_name)
         display_name = character_name or "\u672a\u547d\u540d\u89d2\u8272"
+        self.last_clone_demo_audio_url = ""
+        self.last_clone_demo_audio_path = ""
         self._log(
             f"\u5f00\u59cb\u58f0\u7ebf\u514b\u9686\uff1a\u89d2\u8272={display_name}\uff0c"
             f"voice_id={chosen_voice_id}"
@@ -324,6 +331,9 @@ class CloudTTSAdapter(TTSAdapter):
             "need_noise_reduction": self.need_noise_reduction,
             "need_volume_normalization": self.need_volume_normalization,
         }
+        prompt_text = str(prompt_text or "").strip()
+        if prompt_text:
+            payload["text"] = prompt_text
         clone_language_boost = self._language_boost_from_code(reference_audio_language)
         if clone_language_boost:
             payload["language_boost"] = clone_language_boost
@@ -339,6 +349,16 @@ class CloudTTSAdapter(TTSAdapter):
         resp.raise_for_status()
         data = resp.json()
         self._raise_for_base_resp(data)
+        demo_audio = str(data.get("demo_audio") or "").strip()
+        if demo_audio.startswith(("http://", "https://")):
+            self.last_clone_demo_audio_url = demo_audio
+            try:
+                demo_path = self._download_clone_demo_audio(demo_audio, chosen_voice_id)
+            except Exception as exc:
+                self._log(f"\u58f0\u7ebf\u514b\u9686\u8bd5\u542c\u97f3\u9891\u4e0b\u8f7d\u5931\u8d25\uff1a{exc}")
+            else:
+                self.last_clone_demo_audio_path = str(demo_path.resolve())
+                self._log(f"\u58f0\u7ebf\u514b\u9686\u8bd5\u542c\u97f3\u9891\u5df2\u4fdd\u5b58\uff1a{self.last_clone_demo_audio_path}")
         self._cache_voice(path, character_name, chosen_voice_id)
         if character_name:
             state.upsert_voice_record(
@@ -495,6 +515,23 @@ class CloudTTSAdapter(TTSAdapter):
                 raise RuntimeError("MiniMax returned empty audio file.")
             return resp.content
         return self._decode_audio(s)
+
+    def _download_clone_demo_audio(self, url: str, voice_id: str) -> Path:
+        resp = requests.get(url, timeout=self.request_timeout)
+        resp.raise_for_status()
+        if not resp.content:
+            raise RuntimeError("MiniMax returned empty clone demo audio.")
+        suffix = Path(urlparse(url).path).suffix.lower()
+        allowed_suffixes = {f".{item}" for item in VALID_AUDIO_FORMATS}
+        allowed_suffixes.update({".m4a", ".ogg", ".aac"})
+        if suffix not in allowed_suffixes:
+            suffix = ".mp3"
+        stem = self._normalize_voice_id(voice_id or "voice_clone_demo")
+        filename = f"{stem}_{int(time.time() * 1000)}{suffix}"
+        self.clone_demo_audio_dir.mkdir(parents=True, exist_ok=True)
+        out_path = self.clone_demo_audio_dir / filename
+        out_path.write_bytes(resp.content)
+        return out_path
 
     def _decode_audio(self, audio: str) -> bytes:
         s = audio.strip()

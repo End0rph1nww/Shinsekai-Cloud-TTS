@@ -38,6 +38,7 @@ PLUGIN_STATE_KEYS = {
     "model",
     "local_reference_audio_map",
     "reference_audio_language_map",
+    "reference_text_map",
     "auto_prompt_constraint",
     "protect_translate_tone_tags",
     "gpt_sovits_character_profiles",

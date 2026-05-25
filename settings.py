@@ -48,10 +48,12 @@ class CloudTtsSettingsWidget(QWidget):
         self._voice_id_versions: dict[str, list[dict[str, Any]]] = {}
         self._local_reference_audio_map: dict[str, str] = {}
         self._reference_audio_language_map: dict[str, str] = {}
+        self._reference_text_map: dict[str, str] = {}
         self._gpt_sovits_character_profiles: dict[str, dict[str, str]] = {}
         self._gpt_sovits_extra_state: dict[str, Any] = {}
         self._current_voice_character_name = ""
         self._current_template_character_name = ""
+        self._last_clone_demo_audio_path = ""
         self._prompt_constraint_enabled = False
         self._tone_tag_protection_enabled = True
         self._loading_values = True
@@ -279,6 +281,12 @@ class CloudTtsSettingsWidget(QWidget):
         self.reference_audio_language_row = self._row("参考音频语言", self.reference_audio_language)
         voice_lay.addWidget(self.reference_audio_language_row)
 
+        self.reference_text = self._line_edit("")
+        self.reference_text.setPlaceholderText("可选：复刻试听文本，留空则使用角色卡 prompt_text")
+        self.reference_text.editingFinished.connect(self._on_reference_text_changed)
+        self.reference_text_row = self._row("参考文本", self.reference_text)
+        voice_lay.addWidget(self.reference_text_row)
+
         self.character_voice_id = self._voice_combo()
         self.character_voice_id.lineEdit().setPlaceholderText("该角色专用 voice_id")
         self.character_voice_id.currentIndexChanged.connect(
@@ -298,12 +306,18 @@ class CloudTtsSettingsWidget(QWidget):
         self.import_voice_btn.setFixedHeight(FIELD_HEIGHT)
         self.import_voice_btn.clicked.connect(self._import_voice_ids)
 
+        self.play_clone_demo_btn = QPushButton("打开试听音频")
+        self.play_clone_demo_btn.setFixedHeight(FIELD_HEIGHT)
+        self.play_clone_demo_btn.setVisible(False)
+        self.play_clone_demo_btn.clicked.connect(self._open_last_clone_demo_audio)
+
         voice_actions = QWidget()
         voice_actions.setFixedHeight(ROW_HEIGHT)
         voice_actions_lay = QHBoxLayout(voice_actions)
         voice_actions_lay.setContentsMargins(0, 4, 0, 4)
         voice_actions_lay.setSpacing(8)
         voice_actions_lay.addWidget(self.upload_btn, stretch=1)
+        voice_actions_lay.addWidget(self.play_clone_demo_btn)
         voice_actions_lay.addWidget(self.import_voice_btn)
         self.voice_actions_row = voice_actions
         voice_lay.addWidget(voice_actions)
@@ -584,6 +598,7 @@ class CloudTtsSettingsWidget(QWidget):
         self.gsv_super_sampling_row.setVisible(is_gsv)
         self.local_ref_row.setVisible(not is_gsv)
         self.reference_audio_language_row.setVisible(not is_gsv)
+        self.reference_text_row.setVisible(is_minimax)
         self.character_voice_id_row.setVisible(not is_gsv)
         self.voice_actions_row.setVisible(not is_gsv)
         self.gsv_ref_audio_row.setVisible(is_gsv)
@@ -594,6 +609,9 @@ class CloudTtsSettingsWidget(QWidget):
         self.gsv_text_lang_row.setVisible(is_gsv)
         self.switch_box.setVisible(is_minimax)
         self.template_box.setVisible(is_minimax)
+        self.play_clone_demo_btn.setVisible(
+            bool(self._last_clone_demo_audio_path) and is_minimax
+        )
 
     def _provider_label(self) -> str:
         if self._is_qwen_active():
@@ -694,6 +712,12 @@ class CloudTtsSettingsWidget(QWidget):
         self._store_current_reference_audio_language()
         self._save("当前角色参考音频语言已更新。")
 
+    def _on_reference_text_changed(self) -> None:
+        if self._loading_values:
+            return
+        self._store_current_reference_text()
+        self._save("当前角色参考文本已更新。")
+
     def _load_values(self) -> None:
         state.migrate_package_config_to_data_root()
         state.migrate_api_extra_to_plugin_state(self._plugin_root)
@@ -726,6 +750,9 @@ class CloudTtsSettingsWidget(QWidget):
         )
         self._reference_audio_language_map = state.coerce_voice_language_map(
             values.get("reference_audio_language_map")
+        )
+        self._reference_text_map = self._coerce_text_map(
+            values.get("reference_text_map")
         )
         self._gpt_sovits_extra_state = self._gpt_sovits_state_from_config(values)
         self._gpt_sovits_character_profiles = self._coerce_gpt_sovits_profiles(
@@ -839,6 +866,7 @@ class CloudTtsSettingsWidget(QWidget):
         self._store_current_gpt_sovits_profile()
         self._store_current_local_reference_audio()
         self._store_current_reference_audio_language()
+        self._store_current_reference_text()
         current = self.character_combo.currentText()
         self._characters = state.load_characters()
         self.character_combo.blockSignals(True)
@@ -865,11 +893,15 @@ class CloudTtsSettingsWidget(QWidget):
         char = self._selected_character()
         if not char:
             self.local_ref_path.setText("")
+            self.reference_text.setText("")
             return
         name = str(char.get("name") or "").strip()
         self.local_ref_path.blockSignals(True)
         self.local_ref_path.setText(self._local_reference_audio_map.get(name, ""))
         self.local_ref_path.blockSignals(False)
+        self.reference_text.blockSignals(True)
+        self.reference_text.setText(self._reference_text_map.get(name, ""))
+        self.reference_text.blockSignals(False)
         self._refresh_character_voice_options(name)
         self._refresh_reference_audio_language(name)
         self._sync_gpt_sovits_profile_label()
@@ -877,8 +909,10 @@ class CloudTtsSettingsWidget(QWidget):
     def _on_character_changed(self, _index: int) -> None:
         self._store_local_reference_audio_for_name(self._current_voice_character_name)
         self._store_reference_audio_language_for_name(self._current_voice_character_name)
+        self._store_reference_text_for_name(self._current_voice_character_name)
         self._store_gpt_sovits_profile_for_name(self._current_voice_character_name)
         self._current_voice_character_name = self.character_combo.currentText().strip()
+        self._set_clone_demo_audio_path("")
         self._sync_reference_label()
 
     def _open_current_card_reference_audio(self) -> None:
@@ -895,6 +929,23 @@ class CloudTtsSettingsWidget(QWidget):
             return
         target = path if path.is_dir() else path.parent
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(target)))
+
+    def _set_clone_demo_audio_path(self, path: str) -> None:
+        self._last_clone_demo_audio_path = str(path or "").strip()
+        self.play_clone_demo_btn.setVisible(
+            bool(self._last_clone_demo_audio_path) and self._is_minimax_active()
+        )
+
+    def _open_last_clone_demo_audio(self) -> None:
+        if not self._last_clone_demo_audio_path:
+            QMessageBox.information(self, "Cloud TTS", "当前没有可打开的克隆试听音频。")
+            return
+        path = Path(self._last_clone_demo_audio_path)
+        if not path.is_file():
+            QMessageBox.warning(self, "Cloud TTS", f"试听音频文件不存在：\n{path}")
+            self._set_clone_demo_audio_path("")
+            return
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(path)))
 
     def _choose_local_reference_audio(self) -> None:
         char = self._selected_character()
@@ -951,6 +1002,27 @@ class CloudTtsSettingsWidget(QWidget):
             self._reference_audio_language_map.pop(name, None)
         else:
             self._reference_audio_language_map[name] = code
+
+    def _store_current_reference_text(self) -> None:
+        self._store_reference_text_for_name(self.character_combo.currentText().strip())
+
+    def _store_reference_text_for_name(self, character_name: str) -> None:
+        name = (character_name or "").strip()
+        if not name or not hasattr(self, "reference_text"):
+            return
+        text = self.reference_text.text().strip()
+        if text:
+            self._reference_text_map[name] = text
+        else:
+            self._reference_text_map.pop(name, None)
+
+    def _reference_text_for_character(self, char: dict[str, Any]) -> str:
+        name = str(char.get("name") or "").strip()
+        if name:
+            text = self._reference_text_map.get(name, "").strip()
+            if text:
+                return text
+        return str(char.get("prompt_text") or "").strip()
 
     def _reference_audio_language_for_name(self, character_name: str) -> str:
         name = (character_name or "").strip()
@@ -1127,6 +1199,25 @@ class CloudTtsSettingsWidget(QWidget):
                 out[name] = path
         return out
 
+    def _coerce_text_map(self, value: Any) -> dict[str, str]:
+        if isinstance(value, str):
+            try:
+                value = json.loads(value)
+            except Exception:
+                try:
+                    value = ast.literal_eval(value)
+                except Exception:
+                    value = {}
+        if not isinstance(value, dict):
+            return {}
+        out: dict[str, str] = {}
+        for key, item in value.items():
+            name = str(key or "").strip()
+            text = str(item or "").strip()
+            if name and text:
+                out[name] = text
+        return out
+
     def _coerce_voice_id_versions(self, value: Any) -> dict[str, list[dict[str, Any]]]:
         if isinstance(value, str):
             try:
@@ -1194,6 +1285,7 @@ class CloudTtsSettingsWidget(QWidget):
         self._store_current_character_voice_id()
         self._store_current_local_reference_audio()
         self._store_current_reference_audio_language()
+        self._store_current_reference_text()
         self._store_current_gpt_sovits_profile()
         default_model = self._current_provider_default_model()
         result = {
@@ -1203,6 +1295,7 @@ class CloudTtsSettingsWidget(QWidget):
             "voice_id_versions": dict(self._voice_id_versions),
             "local_reference_audio_map": dict(self._local_reference_audio_map),
             "reference_audio_language_map": dict(self._reference_audio_language_map),
+            "reference_text_map": dict(self._reference_text_map),
             "auto_prompt_constraint": self._prompt_constraint_enabled,
             "protect_translate_tone_tags": self._tone_tag_protection_enabled,
         }
@@ -1717,6 +1810,7 @@ class CloudTtsSettingsWidget(QWidget):
                 f"请先在 API 设定页选择 {'Qwen3 TTS' if is_qwen else 'MiniMax TTS'} 并填写 API KEY。",
             )
             return
+        self._set_clone_demo_audio_path("")
         self.upload_btn.setEnabled(False)
         self.status.setText(f"正在上传参考音频，通过 {provider_label} 创建 voice_id...")
         try:
@@ -1732,7 +1826,7 @@ class CloudTtsSettingsWidget(QWidget):
                 voice_id = adapter.create_cloned_voice_from_file(
                     path,
                     character_name=str(char.get("name") or ""),
-                    prompt_text=str(char.get("prompt_text") or ""),
+                    prompt_text=self._reference_text_for_character(char),
                     reference_audio_language=self._reference_audio_language_for_name(
                         str(char.get("name") or "")
                     ),
@@ -1741,6 +1835,7 @@ class CloudTtsSettingsWidget(QWidget):
             self.status.setText(f"上传失败：{exc}")
             QMessageBox.warning(self, "Cloud TTS", str(exc))
         else:
+            demo_audio_path = str(getattr(adapter, "last_clone_demo_audio_path", "") or "").strip()
             name = str(char.get("name") or "").strip()
             if name:
                 self._ensure_voice_version(
@@ -1756,6 +1851,10 @@ class CloudTtsSettingsWidget(QWidget):
                 self._refresh_character_voice_options(name)
                 self._refresh_default_voice_options()
             self._save()
-            self.status.setText(f"上传完成，已绑定 {name or '当前角色'} 的 voice_id：{voice_id}")
+            self._set_clone_demo_audio_path(demo_audio_path)
+            message = f"上传完成，已绑定 {name or '当前角色'} 的 voice_id：{voice_id}"
+            if demo_audio_path:
+                message += "；试听音频已下载，可点击「打开试听音频」。"
+            self.status.setText(message)
         finally:
             self.upload_btn.setEnabled(True)
