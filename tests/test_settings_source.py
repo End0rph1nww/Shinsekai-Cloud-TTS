@@ -35,11 +35,13 @@ def test_voice_id_export_button_writes_single_voice_payload():
     assert "voice_actions_lay.addWidget(self.export_voice_btn)" in source
     assert "VOICE_ID_EXPORT_EXCLUDED_KEYS" in source
     assert '"reference_audio_path"' in source
+    assert '"character_name",' in source
     assert '"type": "cloud_tts.voice_id"' in payload_source
     assert '"character_name": character_name' in payload_source
     assert '"voice_id": voice_id' in payload_source
     assert "key not in VOICE_ID_EXPORT_EXCLUDED_KEYS" in payload_source
     assert "VOICE_ID_EXPORT_EXCLUDED_KEYS" in bind_source
+    assert "clean.pop(key, None)" in bind_source
     assert "QFileDialog.getSaveFileName" in export_source
     assert "json.dumps(payload, ensure_ascii=False, indent=2)" in export_source
 
