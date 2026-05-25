@@ -874,7 +874,13 @@ class CloudTtsSettingsWidget(QWidget):
         for idx, rec in enumerate(versions, start=1):
             voice_id = str(rec.get("voice_id") or "").strip()
             if voice_id:
-                self.character_voice_id.addItem(f"版本 {idx} / {voice_id}", voice_id)
+                display_name = str(rec.get("imported_character_name") or "").strip()
+                label = (
+                    f"{display_name} / 版本 {idx} / {voice_id}"
+                    if display_name
+                    else f"版本 {idx} / {voice_id}"
+                )
+                self.character_voice_id.addItem(label, voice_id)
         if selected and self.character_voice_id.findData(selected) < 0:
             self.character_voice_id.addItem(f"手动 / {selected}", selected)
         self._set_voice_combo_value(self.character_voice_id, selected)
