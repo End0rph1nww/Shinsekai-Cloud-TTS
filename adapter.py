@@ -244,7 +244,7 @@ class CloudTTSAdapter(TTSAdapter):
             "text": text_value,
             "stream": False,
             "language_boost": language_boost,
-            "output_format": "hex",
+            "output_format": "url",
             "voice_setting": {
                 "voice_id": voice_id,
                 "speed": speed_value,
@@ -288,7 +288,7 @@ class CloudTTSAdapter(TTSAdapter):
                 "\u63a5\u53e3\u8fd4\u56de\u6210\u529f\uff0c"
                 "\u6b63\u5728\u89e3\u7801\u5e76\u5199\u5165\u97f3\u9891\u6587\u4ef6..."
             )
-            out_path.write_bytes(self._decode_audio(str(audio)))
+            out_path.write_bytes(self._audio_bytes(str(audio)))
             abs_path = os.path.abspath(out_path)
             self._log(f"\u5408\u6210\u5b8c\u6210\uff1a{abs_path}")
             return abs_path
@@ -485,6 +485,16 @@ class CloudTTSAdapter(TTSAdapter):
         code = base.get("status_code", 0)
         if code not in (0, "0", None):
             raise RuntimeError(f"{code}: {base.get('status_msg', 'MiniMax API error')}")
+
+    def _audio_bytes(self, audio: str) -> bytes:
+        s = audio.strip()
+        if s.startswith(("http://", "https://")):
+            resp = requests.get(s, timeout=self.request_timeout)
+            resp.raise_for_status()
+            if not resp.content:
+                raise RuntimeError("MiniMax returned empty audio file.")
+            return resp.content
+        return self._decode_audio(s)
 
     def _decode_audio(self, audio: str) -> bytes:
         s = audio.strip()
