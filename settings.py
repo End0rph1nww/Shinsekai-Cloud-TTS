@@ -37,6 +37,18 @@ from plugins.cloud_tts import state
 LABEL_WIDTH = 134
 ROW_HEIGHT = 44
 FIELD_HEIGHT = 34
+IMPORTED_VOICE_BUCKET = "__imported__"
+IMPORTED_VOICE_LABEL = "导入音色"
+VOICE_ID_EXPORT_EXCLUDED_KEYS = {
+    "voices",
+    "voice_id_versions",
+    "voice_id_map",
+    "reference_audio_path",
+    "local_reference_audio_path",
+    "ref_audio_path",
+    "demo_audio_path",
+    "last_clone_demo_audio_path",
+}
 
 
 class CloudTtsSettingsWidget(QWidget):
@@ -306,6 +318,10 @@ class CloudTtsSettingsWidget(QWidget):
         self.import_voice_btn.setFixedHeight(FIELD_HEIGHT)
         self.import_voice_btn.clicked.connect(self._import_voice_ids)
 
+        self.export_voice_btn = QPushButton("导出当前 voice_id")
+        self.export_voice_btn.setFixedHeight(FIELD_HEIGHT)
+        self.export_voice_btn.clicked.connect(self._export_current_voice_id)
+
         self.play_clone_demo_btn = QPushButton("打开试听文件夹")
         self.play_clone_demo_btn.setFixedHeight(FIELD_HEIGHT)
         self.play_clone_demo_btn.setVisible(False)
@@ -318,6 +334,7 @@ class CloudTtsSettingsWidget(QWidget):
         voice_actions_lay.setSpacing(8)
         voice_actions_lay.addWidget(self.upload_btn, stretch=1)
         voice_actions_lay.addWidget(self.play_clone_demo_btn)
+        voice_actions_lay.addWidget(self.export_voice_btn)
         voice_actions_lay.addWidget(self.import_voice_btn)
         self.voice_actions_row = voice_actions
         voice_lay.addWidget(voice_actions)
@@ -813,16 +830,18 @@ class CloudTtsSettingsWidget(QWidget):
         seen: set[str] = set()
         for name, versions in self._voice_id_versions.items():
             clean_name = str(name or "").strip()
+            label_name = IMPORTED_VOICE_LABEL if clean_name == IMPORTED_VOICE_BUCKET else clean_name
             for idx, rec in enumerate(versions, start=1):
                 voice_id = str(rec.get("voice_id") or "").strip()
                 if not voice_id or voice_id in seen:
                     continue
-                label = f"{clean_name} / 版本 {idx} / {voice_id}"
+                label = f"{label_name} / 版本 {idx} / {voice_id}"
                 out.append((label, voice_id))
                 seen.add(voice_id)
         for name, voice_id in self._voice_id_map.items():
             if voice_id and voice_id not in seen:
-                out.append((f"{name} / 当前 / {voice_id}", voice_id))
+                label_name = IMPORTED_VOICE_LABEL if name == IMPORTED_VOICE_BUCKET else name
+                out.append((f"{label_name} / 当前 / {voice_id}", voice_id))
                 seen.add(voice_id)
         return out
 
@@ -946,6 +965,70 @@ class CloudTtsSettingsWidget(QWidget):
             self._set_clone_demo_audio_path("")
             return
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(path.parent)))
+
+    def _current_voice_export_payload(self) -> dict[str, Any] | None:
+        character_name = self.character_combo.currentText().strip()
+        voice_id = self._combo_voice_id(self.character_voice_id)
+        if not voice_id:
+            return None
+        record: dict[str, Any] = {}
+        for item in self._voice_id_versions.get(character_name, []):
+            if str(item.get("voice_id") or "").strip() == voice_id:
+                record = dict(item)
+                break
+        payload = {
+            key: value
+            for key, value in record.items()
+            if key not in VOICE_ID_EXPORT_EXCLUDED_KEYS
+            and value not in (None, "", [], {})
+        }
+        payload.update(
+            {
+                "type": "cloud_tts.voice_id",
+                "provider": self._edit_provider_slug,
+                "provider_label": self._provider_label(),
+                "character_name": character_name,
+                "voice_id": voice_id,
+                "model": str(self.model.currentData() or payload.get("model") or ""),
+                "exported_at": int(time.time()),
+            }
+        )
+        return payload
+
+    def _voice_export_default_path(self, payload: dict[str, Any]) -> Path:
+        name = str(payload.get("character_name") or "voice").strip() or "voice"
+        voice_id = str(payload.get("voice_id") or "voice_id").strip() or "voice_id"
+        stem = f"{name}_{voice_id}"
+        safe = "".join(ch if ch.isalnum() or ch in "._-" else "_" for ch in stem)
+        safe = safe.strip("._-")[:96] or "cloud_tts_voice_id"
+        return state.project_root() / f"{safe}.json"
+
+    def _export_current_voice_id(self) -> None:
+        payload = self._current_voice_export_payload()
+        if not payload:
+            QMessageBox.information(self, "Cloud TTS", "当前角色没有可导出的 voice_id。")
+            return
+        path_text, _selected_filter = QFileDialog.getSaveFileName(
+            self,
+            "导出当前 voice_id",
+            str(self._voice_export_default_path(payload)),
+            "JSON Files (*.json);;All Files (*)",
+        )
+        if not path_text:
+            return
+        path = Path(path_text)
+        if path.suffix.lower() != ".json":
+            path = path.with_suffix(".json")
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(
+                json.dumps(payload, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+        except Exception as exc:
+            QMessageBox.warning(self, "Cloud TTS", f"导出 voice_id 失败：\n{exc}")
+            return
+        self.status.setText(f"已导出 voice_id：{path}")
 
     def _choose_local_reference_audio(self) -> None:
         char = self._selected_character()
@@ -1388,13 +1471,43 @@ class CloudTtsSettingsWidget(QWidget):
         if imported:
             parts.append(f"已导入 {imported} 个 voice_id")
         if default_voice_id:
-            parts.append("已恢复默认 voice_id")
+            parts.append("已更新默认 voice_id 候选")
         if errors:
             parts.append(f"{len(errors)} 个文件失败")
         message = "，".join(parts) or "没有找到可导入的 voice_id"
         self.status.setText(message)
         if errors:
             QMessageBox.warning(self, "Cloud TTS", "\n".join(errors[:5]))
+
+    def _import_voice_target_character(self, exported_character_name: str) -> tuple[str, str]:
+        exported_name = (exported_character_name or "").strip()
+        if exported_name and state.find_character(exported_name):
+            return exported_name, "matched"
+        current_name = self.character_combo.currentText().strip()
+        if current_name and state.find_character(current_name):
+            return current_name, "current"
+        return IMPORTED_VOICE_BUCKET, "imported"
+
+    def _bind_imported_voice_record(
+        self,
+        character_name: str,
+        voice_id: str,
+        record: dict[str, Any],
+        *,
+        selected: bool,
+    ) -> int:
+        target_name = (character_name or "").strip()
+        vid = (voice_id or "").strip()
+        if not target_name or not vid:
+            return 0
+        clean = dict(record)
+        for key in {"voice_id", *VOICE_ID_EXPORT_EXCLUDED_KEYS}:
+            clean.pop(key, None)
+        clean.setdefault("source", "import")
+        self._ensure_voice_version(target_name, vid, **clean)
+        if selected:
+            self._voice_id_map[target_name] = vid
+        return 1
 
     def _import_voice_payload(self, raw: Any, source_path: Path) -> tuple[int, str]:
         if isinstance(raw, list):
@@ -1412,12 +1525,17 @@ class CloudTtsSettingsWidget(QWidget):
         imported = 0
         default_voice_id = str(raw.get("default_voice_id") or "").strip()
         current_character = self.character_combo.currentText().strip()
-        if default_voice_id and current_character:
-            self._ensure_voice_version(
-                current_character,
+        if default_voice_id:
+            target_character = (
+                current_character
+                if current_character and state.find_character(current_character)
+                else IMPORTED_VOICE_BUCKET
+            )
+            self._bind_imported_voice_record(
+                target_character,
                 default_voice_id,
-                source="import_default",
-                imported_from=str(source_path),
+                {"source": "import_default", "imported_from": str(source_path)},
+                selected=target_character == IMPORTED_VOICE_BUCKET,
             )
 
         if "voice_id_map" in raw or "voice_id_versions" in raw or "voice_map" in raw:
@@ -1437,7 +1555,10 @@ class CloudTtsSettingsWidget(QWidget):
             ).strip()
             raw_voices = raw.get("voices") or raw.get("versions") or []
             if selected and not raw_voices:
-                raw_voices = [{"voice_id": selected}]
+                raw_voices = [raw]
+            target_character, target_mode = self._import_voice_target_character(character_name)
+            if selected and not default_voice_id:
+                default_voice_id = selected
             counted_voice_ids: set[str] = set()
             for rec in self._coerce_voice_records(raw_voices):
                 voice_id = str(rec.get("voice_id") or "").strip()
@@ -1445,30 +1566,53 @@ class CloudTtsSettingsWidget(QWidget):
                 clean.pop("voice_id", None)
                 clean.setdefault("source", "import")
                 clean["imported_from"] = str(source_path)
-                self._ensure_voice_version(character_name, voice_id, **clean)
+                if target_mode == "current" and character_name != target_character:
+                    clean["imported_character_name"] = character_name
+                self._bind_imported_voice_record(
+                    target_character,
+                    voice_id,
+                    clean,
+                    selected=bool(selected and voice_id == selected),
+                )
                 if voice_id not in counted_voice_ids:
                     counted_voice_ids.add(voice_id)
                     imported += 1
+                if voice_id and not default_voice_id:
+                    default_voice_id = voice_id
             if selected:
-                self._voice_id_map[character_name] = selected
-                self._ensure_voice_version(
-                    character_name,
+                clean = {
+                    "source": "import_selected",
+                    "imported_from": str(source_path),
+                }
+                if target_mode == "current" and character_name != target_character:
+                    clean["imported_character_name"] = character_name
+                self._bind_imported_voice_record(
+                    target_character,
                     selected,
-                    source="import_selected",
-                    imported_from=str(source_path),
+                    clean,
+                    selected=True,
                 )
                 if selected not in counted_voice_ids:
                     imported += 1
             return imported, default_voice_id
 
         voice_id = str(raw.get("voice_id") or raw.get("id") or "").strip()
-        if voice_id and current_character:
-            self._voice_id_map[current_character] = voice_id
-            self._ensure_voice_version(
+        if voice_id and not default_voice_id:
+            default_voice_id = voice_id
+        if voice_id and current_character and state.find_character(current_character):
+            self._bind_imported_voice_record(
                 current_character,
                 voice_id,
-                source="import_manual",
-                imported_from=str(source_path),
+                {"source": "import_manual", "imported_from": str(source_path)},
+                selected=True,
+            )
+            imported += 1
+        elif voice_id:
+            self._bind_imported_voice_record(
+                IMPORTED_VOICE_BUCKET,
+                voice_id,
+                {"source": "import_manual", "imported_from": str(source_path)},
+                selected=True,
             )
             imported += 1
 
@@ -1479,27 +1623,38 @@ class CloudTtsSettingsWidget(QWidget):
         counted_voice_ids: set[tuple[str, str]] = set()
         voice_map = self._coerce_voice_id_map(raw.get("voice_id_map") or raw.get("voice_map"))
         for name, voice_id in voice_map.items():
-            self._voice_id_map[name] = voice_id
-            self._ensure_voice_version(
-                name,
+            target_name, target_mode = self._import_voice_target_character(name)
+            clean = {"source": "import_map", "imported_from": str(source_path)}
+            if target_mode == "current" and name != target_name:
+                clean["imported_character_name"] = name
+            self._bind_imported_voice_record(
+                target_name,
                 voice_id,
-                source="import_map",
-                imported_from=str(source_path),
+                clean,
+                selected=True,
             )
-            key = (name, voice_id)
+            key = (target_name, voice_id)
             if key not in counted_voice_ids:
                 counted_voice_ids.add(key)
                 imported += 1
         versions = self._coerce_voice_id_versions(raw.get("voice_id_versions"))
         for name, records in versions.items():
+            target_name, target_mode = self._import_voice_target_character(name)
             for rec in records:
                 voice_id = str(rec.get("voice_id") or "").strip()
                 clean = dict(rec)
                 clean.pop("voice_id", None)
                 clean.setdefault("source", "import_versions")
                 clean["imported_from"] = str(source_path)
-                self._ensure_voice_version(name, voice_id, **clean)
-                key = (name, voice_id)
+                if target_mode == "current" and name != target_name:
+                    clean["imported_character_name"] = name
+                self._bind_imported_voice_record(
+                    target_name,
+                    voice_id,
+                    clean,
+                    selected=False,
+                )
+                key = (target_name, voice_id)
                 if key not in counted_voice_ids:
                     counted_voice_ids.add(key)
                     imported += 1
