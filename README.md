@@ -91,9 +91,9 @@ Shinsekai 主程序已包含的基础依赖：
 本插件额外需要的依赖（仅 MiniMax 语音克隆需要）：
 
 - `imageio-ffmpeg>=0.6.0`
-
+在程序主文件夹右键点开终端
 ```bat
-runtime\python.exe -m pip install -r plugins\cloud_tts\requirements.txt
+.\runtime\python.exe -m pip install -r .\plugins\cloud_tts\requirements.txt
 ```
 
 `imageio-ffmpeg` 提供内置 `ffmpeg`，用于将参考音频转换为 MiniMax 接受的单声道 32000 Hz wav。Qwen 声音复刻不需要 ffmpeg，直接上传原始音频文件。
