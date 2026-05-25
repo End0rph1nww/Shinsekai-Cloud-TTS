@@ -64,6 +64,10 @@ def test_imported_voice_can_be_default_candidate_with_or_without_character():
     assert 'f"版本 {idx} / {voice_id}"' in character_voice_source
     assert "state.find_character(exported_name)" in target_source
     assert "state.find_character(current_name)" in target_source
+    assert target_source.index("state.find_character(current_name)") < target_source.index(
+        "state.find_character(exported_name)"
+    )
+    assert 'return current_name, "current"' in target_source
     assert 'return IMPORTED_VOICE_BUCKET, "imported"' in target_source
     assert 'target_mode != "matched" and character_name != target_character' in import_source
     assert 'target_mode != "matched" and name != target_name' in config_import_source

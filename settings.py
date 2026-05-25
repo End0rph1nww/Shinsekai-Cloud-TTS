@@ -1497,11 +1497,11 @@ class CloudTtsSettingsWidget(QWidget):
 
     def _import_voice_target_character(self, exported_character_name: str) -> tuple[str, str]:
         exported_name = (exported_character_name or "").strip()
-        if exported_name and state.find_character(exported_name):
-            return exported_name, "matched"
         current_name = self.character_combo.currentText().strip()
         if current_name and state.find_character(current_name):
             return current_name, "current"
+        if exported_name and state.find_character(exported_name):
+            return exported_name, "matched"
         return IMPORTED_VOICE_BUCKET, "imported"
 
     def _bind_imported_voice_record(
