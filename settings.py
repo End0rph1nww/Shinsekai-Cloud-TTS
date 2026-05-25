@@ -306,7 +306,7 @@ class CloudTtsSettingsWidget(QWidget):
         self.import_voice_btn.setFixedHeight(FIELD_HEIGHT)
         self.import_voice_btn.clicked.connect(self._import_voice_ids)
 
-        self.play_clone_demo_btn = QPushButton("打开试听音频")
+        self.play_clone_demo_btn = QPushButton("打开试听文件夹")
         self.play_clone_demo_btn.setFixedHeight(FIELD_HEIGHT)
         self.play_clone_demo_btn.setVisible(False)
         self.play_clone_demo_btn.clicked.connect(self._open_last_clone_demo_audio)
@@ -945,7 +945,7 @@ class CloudTtsSettingsWidget(QWidget):
             QMessageBox.warning(self, "Cloud TTS", f"试听音频文件不存在：\n{path}")
             self._set_clone_demo_audio_path("")
             return
-        QDesktopServices.openUrl(QUrl.fromLocalFile(str(path)))
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(path.parent)))
 
     def _choose_local_reference_audio(self) -> None:
         char = self._selected_character()
@@ -1854,7 +1854,7 @@ class CloudTtsSettingsWidget(QWidget):
             self._set_clone_demo_audio_path(demo_audio_path)
             message = f"上传完成，已绑定 {name or '当前角色'} 的 voice_id：{voice_id}"
             if demo_audio_path:
-                message += "；试听音频已下载，可点击「打开试听音频」。"
+                message += "；试听音频已下载，可点击「打开试听文件夹」。"
             self.status.setText(message)
         finally:
             self.upload_btn.setEnabled(True)
