@@ -52,13 +52,17 @@ def test_imported_voice_can_be_default_candidate_with_or_without_character():
     all_voice_source = _function_source("_all_voice_options")
     target_source = _function_source("_import_voice_target_character")
     import_source = _function_source("_import_voice_payload")
+    config_import_source = _function_source("_import_voice_config_payload")
 
     assert 'IMPORTED_VOICE_BUCKET = "__imported__"' in source
     assert 'IMPORTED_VOICE_LABEL = "导入音色"' in source
-    assert "label_name = IMPORTED_VOICE_LABEL if clean_name == IMPORTED_VOICE_BUCKET else clean_name" in all_voice_source
+    assert 'display_name = str(rec.get("imported_character_name") or "").strip()' in all_voice_source
+    assert "label_name = display_name or bucket_label_name" in all_voice_source
     assert "state.find_character(exported_name)" in target_source
     assert "state.find_character(current_name)" in target_source
     assert 'return IMPORTED_VOICE_BUCKET, "imported"' in target_source
+    assert 'target_mode != "matched" and character_name != target_character' in import_source
+    assert 'target_mode != "matched" and name != target_name' in config_import_source
     assert "if selected and not default_voice_id:" in import_source
     assert "default_voice_id = selected" in import_source
     assert "if voice_id and not default_voice_id:" in import_source

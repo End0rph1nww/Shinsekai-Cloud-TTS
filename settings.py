@@ -836,11 +836,15 @@ class CloudTtsSettingsWidget(QWidget):
         seen: set[str] = set()
         for name, versions in self._voice_id_versions.items():
             clean_name = str(name or "").strip()
-            label_name = IMPORTED_VOICE_LABEL if clean_name == IMPORTED_VOICE_BUCKET else clean_name
+            bucket_label_name = (
+                IMPORTED_VOICE_LABEL if clean_name == IMPORTED_VOICE_BUCKET else clean_name
+            )
             for idx, rec in enumerate(versions, start=1):
                 voice_id = str(rec.get("voice_id") or "").strip()
                 if not voice_id or voice_id in seen:
                     continue
+                display_name = str(rec.get("imported_character_name") or "").strip()
+                label_name = display_name or bucket_label_name
                 label = f"{label_name} / 版本 {idx} / {voice_id}"
                 out.append((label, voice_id))
                 seen.add(voice_id)
@@ -1572,7 +1576,7 @@ class CloudTtsSettingsWidget(QWidget):
                 clean.pop("voice_id", None)
                 clean.setdefault("source", "import")
                 clean["imported_from"] = str(source_path)
-                if target_mode == "current" and character_name != target_character:
+                if target_mode != "matched" and character_name != target_character:
                     clean["imported_character_name"] = character_name
                 self._bind_imported_voice_record(
                     target_character,
@@ -1590,7 +1594,7 @@ class CloudTtsSettingsWidget(QWidget):
                     "source": "import_selected",
                     "imported_from": str(source_path),
                 }
-                if target_mode == "current" and character_name != target_character:
+                if target_mode != "matched" and character_name != target_character:
                     clean["imported_character_name"] = character_name
                 self._bind_imported_voice_record(
                     target_character,
@@ -1631,7 +1635,7 @@ class CloudTtsSettingsWidget(QWidget):
         for name, voice_id in voice_map.items():
             target_name, target_mode = self._import_voice_target_character(name)
             clean = {"source": "import_map", "imported_from": str(source_path)}
-            if target_mode == "current" and name != target_name:
+            if target_mode != "matched" and name != target_name:
                 clean["imported_character_name"] = name
             self._bind_imported_voice_record(
                 target_name,
@@ -1652,7 +1656,7 @@ class CloudTtsSettingsWidget(QWidget):
                 clean.pop("voice_id", None)
                 clean.setdefault("source", "import_versions")
                 clean["imported_from"] = str(source_path)
-                if target_mode == "current" and name != target_name:
+                if target_mode != "matched" and name != target_name:
                     clean["imported_character_name"] = name
                 self._bind_imported_voice_record(
                     target_name,
