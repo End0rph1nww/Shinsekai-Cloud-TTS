@@ -24,6 +24,16 @@ def test_clone_demo_button_opens_containing_folder():
     assert "QUrl.fromLocalFile(str(path))" not in function_source
 
 
+def test_minimax_clone_text_is_labeled_as_demo_text():
+    source = (ROOT / "settings.py").read_text(encoding="utf-8")
+    handler_source = _function_source("_on_reference_text_changed")
+
+    assert 'self.reference_text_row = self._row("试听文本", self.reference_text)' in source
+    assert "可选：用于生成克隆试听音频，留空则使用角色卡 prompt_text" in source
+    assert "当前角色试听文本已更新。" in handler_source
+    assert 'self.gsv_prompt_text_row = self._row("GSV 参考文本", self.gsv_prompt_text)' in source
+
+
 def test_voice_id_export_button_writes_single_voice_payload():
     source = (ROOT / "settings.py").read_text(encoding="utf-8")
     payload_source = _function_source("_current_voice_export_payload")

@@ -300,9 +300,9 @@ class CloudTtsSettingsWidget(QWidget):
         voice_lay.addWidget(self.reference_audio_language_row)
 
         self.reference_text = self._line_edit("")
-        self.reference_text.setPlaceholderText("可选：复刻试听文本，留空则使用角色卡 prompt_text")
+        self.reference_text.setPlaceholderText("可选：用于生成克隆试听音频，留空则使用角色卡 prompt_text")
         self.reference_text.editingFinished.connect(self._on_reference_text_changed)
-        self.reference_text_row = self._row("参考文本", self.reference_text)
+        self.reference_text_row = self._row("试听文本", self.reference_text)
         voice_lay.addWidget(self.reference_text_row)
 
         self.character_voice_id = self._voice_combo()
@@ -739,7 +739,7 @@ class CloudTtsSettingsWidget(QWidget):
         if self._loading_values:
             return
         self._store_current_reference_text()
-        self._save("当前角色参考文本已更新。")
+        self._save("当前角色试听文本已更新。")
 
     def _load_values(self) -> None:
         state.migrate_package_config_to_data_root()
