@@ -283,8 +283,7 @@ class CloudTTSAdapter(TTSAdapter):
                 json=payload,
                 timeout=self.request_timeout,
             )
-            resp.raise_for_status()
-            data = resp.json()
+            data = self._json_response(resp, "/t2a_v2")
             self._raise_for_base_resp(data)
             audio = (data.get("data") or {}).get("audio")
             if not audio:
@@ -346,8 +345,7 @@ class CloudTTSAdapter(TTSAdapter):
             json=payload,
             timeout=self.request_timeout,
         )
-        resp.raise_for_status()
-        data = resp.json()
+        data = self._json_response(resp, "/voice_clone")
         self._raise_for_base_resp(data)
         demo_audio = str(data.get("demo_audio") or "").strip()
         if demo_audio.startswith(("http://", "https://")):
@@ -425,8 +423,7 @@ class CloudTTSAdapter(TTSAdapter):
                 files={"file": (path.name, f)},
                 timeout=self.request_timeout,
             )
-        resp.raise_for_status()
-        data = resp.json()
+        data = self._json_response(resp, "/files/upload")
         self._raise_for_base_resp(data)
         file_id = (data.get("file") or {}).get("file_id")
         if file_id is None:
@@ -505,6 +502,57 @@ class CloudTTSAdapter(TTSAdapter):
         code = base.get("status_code", 0)
         if code not in (0, "0", None):
             raise RuntimeError(f"{code}: {base.get('status_msg', 'MiniMax API error')}")
+
+    def _json_response(self, resp: requests.Response, endpoint: str) -> dict[str, Any]:
+        data: Any = None
+        json_error: Exception | None = None
+        try:
+            data = resp.json()
+        except ValueError as exc:
+            json_error = exc
+        try:
+            resp.raise_for_status()
+        except requests.HTTPError as exc:
+            detail = self._server_error_detail(data, getattr(resp, "text", ""))
+            status = getattr(resp, "status_code", "")
+            prefix = f"{endpoint} HTTP {status}" if status else f"{endpoint} HTTP error"
+            if detail:
+                raise RuntimeError(f"{prefix}: {detail}") from exc
+            raise RuntimeError(f"{prefix}: {exc}") from exc
+        if json_error is not None:
+            raise RuntimeError(f"{endpoint} returned invalid JSON: {json_error}") from json_error
+        if not isinstance(data, dict):
+            raise RuntimeError(f"{endpoint} returned non-object JSON response.")
+        return data
+
+    @staticmethod
+    def _server_error_detail(data: Any, raw_text: str = "") -> str:
+        if isinstance(data, dict):
+            base = data.get("base_resp")
+            if isinstance(base, dict):
+                msg = str(base.get("status_msg") or "").strip()
+                code = base.get("status_code")
+                if msg:
+                    return f"{code}: {msg}" if code not in (None, "") else msg
+            for key in ("detail", "message", "msg", "error_msg", "status_msg"):
+                value = data.get(key)
+                if isinstance(value, (str, int, float)):
+                    text = str(value).strip()
+                    if text:
+                        return text
+            error = data.get("error")
+            if isinstance(error, dict):
+                for key in ("message", "msg", "detail", "code"):
+                    value = error.get(key)
+                    if isinstance(value, (str, int, float)):
+                        text = str(value).strip()
+                        if text:
+                            return text
+            try:
+                return json.dumps(data, ensure_ascii=False)[:1000]
+            except TypeError:
+                return str(data)[:1000]
+        return str(raw_text or "").strip()[:1000]
 
     def _audio_bytes(self, audio: str) -> bytes:
         s = audio.strip()
