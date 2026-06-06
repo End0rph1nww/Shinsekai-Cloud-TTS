@@ -32,7 +32,7 @@ class CloudTtsPlugin(PluginBase):
             "Cloud TTS adapter for Shinsekai supporting MiniMax, Qwen3 TTS, "
             "and GPT SoVITS Cloud. Provides per-character voice ID binding, "
             "reference-audio voice cloning, server-side reference audio and model paths "
-            "for self-hosted GPT-SoVITS, plus tone-control prompt helpers."
+            "for self-hosted GPT-SoVITS, plus practical tone-control prompt helpers."
         )
 
     @property
