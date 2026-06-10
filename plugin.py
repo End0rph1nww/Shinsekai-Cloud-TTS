@@ -70,8 +70,26 @@ class CloudTtsPlugin(PluginBase):
                 order=41.0,
             )
         )
+        _register_react_contributions(register, plugin_root)
 
     def shutdown(self) -> None:
         prompt_hook.uninstall()
         if not state.plugin_manifest_enabled():
             host_hook.uninstall()
+
+
+def _register_react_contributions(register: PluginCapabilityRegistry, plugin_root: Path) -> None:
+    """注册 PR80+ 宿主的 React 插件页；旧宿主缺少注册方法/SDK 类型时静默跳过。
+
+    frontend_contrib 顶层 import 了新 SDK 类型，因此必须延迟到特性检测之后
+    再 import，不得提升到本文件顶部。
+    """
+    if not hasattr(register, "register_frontend_config_page"):
+        return
+    try:
+        from plugins.cloud_tts.frontend_contrib import build_api_surface, build_page
+    except ImportError:
+        return
+    register.register_frontend_config_page(build_api_surface(plugin_root))
+    if hasattr(register, "register_frontend_page"):
+        register.register_frontend_page(build_page(plugin_root))
