@@ -54,19 +54,31 @@
 
 ---
 
-## P2 — frontend_contrib.py API 面（目标版本 0.12.0，minor）
+## P2 — frontend_contrib.py API 面（目标版本 0.12.0，minor）✅ 完成
 
-- [ ] P2.1 新建 `frontend_contrib.py`：`build_api_surface()`（`FrontendConfigContribution`，
-      schema=[]，load_values/save_values 按架构文档 §4.3 契约）
-- [ ] P2.2 实现 9 个 action（list_characters / bind_voice / upload_reference / clear_reference /
-      clone_voice / export_voice / import_voice / save_gpt_sovits_profile / get_constraints+save_constraints）
-- [ ] P2.3 `build_page()`（`FrontendPageContribution`，entry=frontend/index.html，同 page_id）
-- [ ] P2.4 `plugin.py` 注册：`hasattr` + `try/except ImportError` 双重防御（架构文档 §4.3 代码）
-- [ ] P2.5 `load_values` 返回 `key_configured` 布尔（不回明文 key）
-- [ ] P2.6 新增 `tests/test_frontend_contrib.py`（load/save 往返、每个 action 入出参）
-- [ ] P2.7 旧宿主兼容验证：模拟无新方法的 register 对象，initialize 不抛错
-- [ ] P2.8 在 PR80 宿主里实测：`GET /api/plugins/{id}/ui` 返回合并 payload；config/action 路由可用
-- [ ] P2.9 提交 P2 + bump 0.12.0
+- [x] P2.1 新建 `frontend_contrib.py`：`build_api_surface()`（schema=[]；load_values 返回
+      **三 provider 全量快照**（含 voice_options/characters/prompt_languages），save_values
+      白名单落盘——比架构文档的单 provider 契约更进一步，页面无需切换动作）
+- [x] P2.2 实现 **10 个** action（get/save_constraints 拆成两个；action body 直接 POST 业务参数，
+      宿主 `payload.get("values", payload)` 兜底）
+- [x] P2.3 `build_page()` + `frontend/index.html` 占位页（P3 替换为正式界面）
+- [x] P2.4 `plugin.py` `_register_react_contributions()`：hasattr + ImportError 双重防御
+- [x] P2.5 `key_configured` 布尔；load_values/save_values 双向隔离 api_key / base_api_url
+- [x] P2.6 `tests/test_frontend_contrib.py` 13 个测试（fake_env fixture 内存配置仓）
+- [x] P2.7 旧宿主兼容回归（`test_register_react_contributions_skips_old_host`）
+- [x] P2.8 宿主 payload 级冒烟通过（`_frontend_config_page_payload` 对真实配置序列化：
+      3 provider 块 / 10 actions / 无 key 泄漏）。**完整 HTTP 路由实测合并到 P3.10 Tauri 实测**
+- [x] P2.9 提交 P2（`11b5111`）+ bump 0.12.0（`d6f58ee`）
+
+### P2 实现备忘（交接用）
+
+- **demo 试听**：`clone_voice` 返回 `demo_url = /api/media?path=<urlencoded>`；demo 文件
+  仍存 `cache/audio/cloud_tts_clone_demo/`（adapter 原逻辑零改动）。`/api/media` 服务
+  项目根内任意文件（`handler.py::_resolve_project_path`）。
+- **上传**：`upload_reference` 收 base64，落盘 `state.plugin_data_root()/reference_audio/<角色>/`，
+  扩展名白名单 + 20MB 上限。
+- **action 错误约定**：业务错误 raise ValueError（宿主转 error json，页面显示 message）。
+- **save_values 必须带 `provider`** 字段（三选一 slug），否则 ValueError。
 
 ---
 
@@ -101,9 +113,9 @@
 
 ## 当前状态
 
-- **已完成**：P1（0.11.2）
-- **进行中**：P2
-- **下一步**：P2.1 新建 `frontend_contrib.py` API 面
+- **已完成**：P1（0.11.2）、P2（0.12.0）
+- **进行中**：P3
+- **下一步**：P3.1 `frontend/index.html` 正式骨架（替换占位页）
 
 ## 变更日志
 
@@ -111,3 +123,4 @@
 |---|---|---|---|
 | 2026-06-10 | 架构文档 v2、本进度文件建立 | 0917cdc（随 P1 一并提交） | 分支 `upgrade/pr80-react-ui` |
 | 2026-06-10 | P1 全部（P1.1–P1.10），31 测试全过 | 0917cdc + b0ad358 | settings.py 2031→约 1500 行；service 层 600+ 行 |
+| 2026-06-10 | P2 全部（P2.1–P2.9），45 测试全过 + 宿主冒烟 | 11b5111 + d6f58ee | 10 actions；P2.8 完整路由实测并入 P3.10 |
