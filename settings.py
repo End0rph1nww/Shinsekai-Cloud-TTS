@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-import ast
 import json
-import time
 from pathlib import Path
 from typing import Any
 
@@ -26,35 +24,15 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from plugins.cloud_tts.adapter import (
-    CloudTTSAdapter,
-    VALID_MODELS,
-)
+from plugins.cloud_tts.adapter import CloudTTSAdapter
 from plugins.cloud_tts.gpt_sovits_adapter import GPTSoVITSApiAdapter
+from plugins.cloud_tts import config_service as service
 from plugins.cloud_tts import state
 
 
 LABEL_WIDTH = 134
 ROW_HEIGHT = 44
 FIELD_HEIGHT = 34
-IMPORTED_VOICE_BUCKET = "__imported__"
-IMPORTED_VOICE_LABEL = "导入音色"
-VOICE_ID_EXPORT_EXCLUDED_KEYS = {
-    "voices",
-    "voice_id_versions",
-    "voice_id_map",
-    "character_name",
-    "character",
-    "name",
-    "selected_voice_id",
-    "type",
-    "imported_from",
-    "reference_audio_path",
-    "local_reference_audio_path",
-    "ref_audio_path",
-    "demo_audio_path",
-    "last_clone_demo_audio_path",
-}
 
 
 class CloudTtsSettingsWidget(QWidget):
@@ -103,35 +81,18 @@ class CloudTtsSettingsWidget(QWidget):
         return self._edit_provider_slug == state.GPT_SOVITS_PROVIDER_SLUG
 
     def _current_provider_model_options(self) -> tuple[str, ...]:
-        if self._is_qwen_active():
-            return state.QWEN_MODELS
-        if self._is_gpt_sovits_active():
-            return state.GPT_SOVITS_MODELS
-        return VALID_MODELS
+        return service.provider_model_options(self._edit_provider_slug)
 
     def _current_provider_default_model(self) -> str:
-        if self._is_qwen_active():
-            return state.QWEN_DEFAULT_MODEL
-        if self._is_gpt_sovits_active():
-            return state.GPT_SOVITS_DEFAULT_MODEL
-        return "speech-2.8-hd"
+        return service.provider_default_model(self._edit_provider_slug)
 
     def _provider_extra(self) -> dict[str, Any]:
         """返回当前编辑中 provider 的 api.yaml extra 配置。"""
-        if self._is_qwen_active():
-            return state.get_qwen_extra()
-        if self._is_gpt_sovits_active():
-            return state.get_gpt_sovits_extra()
-        return state.get_cloud_extra()
+        return service.get_provider_extra(self._edit_provider_slug)
 
     def _save_provider_extra(self, values: dict[str, Any]) -> None:
         """保存 model / default_voice_id 等到当前 provider 的 api.yaml extra。"""
-        if self._is_qwen_active():
-            state.set_qwen_extra(values)
-        elif self._is_gpt_sovits_active():
-            state.set_gpt_sovits_extra(values)
-        else:
-            state.set_cloud_extra(values)
+        service.set_provider_extra(self._edit_provider_slug, values)
 
     def _build_ui(self) -> None:
         self._apply_field_style()
@@ -542,27 +503,10 @@ class CloudTtsSettingsWidget(QWidget):
         self.setStyleSheet("")
 
     def _valid_choice(self, value: Any, valid: tuple[str, ...], default: str) -> str:
-        item = str(value or "").strip()
-        if item in valid:
-            return item
-        lowered = item.lower()
-        for candidate in valid:
-            if candidate.lower() == lowered:
-                return candidate
-        return default
+        return service.valid_choice(value, valid, default)
 
     def _as_bool(self, value: Any, default: bool) -> bool:
-        if isinstance(value, bool):
-            return value
-        if value is None:
-            return default
-        if isinstance(value, str):
-            text = value.strip().lower()
-            if text in {"1", "true", "yes", "on"}:
-                return True
-            if text in {"0", "false", "no", "off"}:
-                return False
-        return bool(value)
+        return service.as_bool(value, default)
 
     def _refresh_prompt_constraint_button(self) -> None:
         if not hasattr(self, "prompt_constraint_btn"):
@@ -637,11 +581,7 @@ class CloudTtsSettingsWidget(QWidget):
         )
 
     def _provider_label(self) -> str:
-        if self._is_qwen_active():
-            return "Qwen3 TTS"
-        if self._is_gpt_sovits_active():
-            return "GPT SoVITS Cloud"
-        return "MiniMax TTS"
+        return service.provider_label(self._edit_provider_slug)
 
     def _on_edit_provider_changed(self) -> None:
         """用户手动切换插件页的 provider 编辑视图。"""
@@ -666,10 +606,10 @@ class CloudTtsSettingsWidget(QWidget):
             )
         self._edit_provider_slug = new_slug
         cfg = state.load_plugin_config(self._plugin_root, self._edit_provider_slug)
-        self._voice_id_map = self._coerce_voice_id_map(cfg.get("voice_id_map"))
-        self._voice_id_versions = self._coerce_voice_id_versions(cfg.get("voice_id_versions"))
-        self._gpt_sovits_extra_state = self._gpt_sovits_state_from_config(cfg)
-        self._gpt_sovits_character_profiles = self._coerce_gpt_sovits_profiles(
+        self._voice_id_map = service.coerce_voice_id_map(cfg.get("voice_id_map"))
+        self._voice_id_versions = service.coerce_voice_id_versions(cfg.get("voice_id_versions"))
+        self._gpt_sovits_extra_state = service.gpt_sovits_state_from_config(cfg)
+        self._gpt_sovits_character_profiles = service.coerce_gpt_sovits_profiles(
             cfg.get("gpt_sovits_character_profiles")
         )
         self._refresh_model_options()
@@ -766,19 +706,19 @@ class CloudTtsSettingsWidget(QWidget):
                 self._current_provider_default_model(),
             ),
         )
-        self._voice_id_map = self._coerce_voice_id_map(values.get("voice_id_map"))
-        self._voice_id_versions = self._coerce_voice_id_versions(values.get("voice_id_versions"))
-        self._local_reference_audio_map = self._coerce_path_map(
+        self._voice_id_map = service.coerce_voice_id_map(values.get("voice_id_map"))
+        self._voice_id_versions = service.coerce_voice_id_versions(values.get("voice_id_versions"))
+        self._local_reference_audio_map = service.coerce_path_map(
             values.get("local_reference_audio_map")
         )
         self._reference_audio_language_map = state.coerce_voice_language_map(
             values.get("reference_audio_language_map")
         )
-        self._reference_text_map = self._coerce_text_map(
+        self._reference_text_map = service.coerce_text_map(
             values.get("reference_text_map")
         )
-        self._gpt_sovits_extra_state = self._gpt_sovits_state_from_config(values)
-        self._gpt_sovits_character_profiles = self._coerce_gpt_sovits_profiles(
+        self._gpt_sovits_extra_state = service.gpt_sovits_state_from_config(values)
+        self._gpt_sovits_character_profiles = service.coerce_gpt_sovits_profiles(
             values.get("gpt_sovits_character_profiles")
         )
         self.gsv_text_split_method.setText(str(values.get("gpt_sovits_text_split_method") or "cut5"))
@@ -832,28 +772,7 @@ class CloudTtsSettingsWidget(QWidget):
         return text
 
     def _all_voice_options(self) -> list[tuple[str, str]]:
-        out: list[tuple[str, str]] = []
-        seen: set[str] = set()
-        for name, versions in self._voice_id_versions.items():
-            clean_name = str(name or "").strip()
-            bucket_label_name = (
-                IMPORTED_VOICE_LABEL if clean_name == IMPORTED_VOICE_BUCKET else clean_name
-            )
-            for idx, rec in enumerate(versions, start=1):
-                voice_id = str(rec.get("voice_id") or "").strip()
-                if not voice_id or voice_id in seen:
-                    continue
-                display_name = str(rec.get("imported_character_name") or "").strip()
-                label_name = display_name or bucket_label_name
-                label = f"{label_name} / 版本 {idx} / {voice_id}"
-                out.append((label, voice_id))
-                seen.add(voice_id)
-        for name, voice_id in self._voice_id_map.items():
-            if voice_id and voice_id not in seen:
-                label_name = IMPORTED_VOICE_LABEL if name == IMPORTED_VOICE_BUCKET else name
-                out.append((f"{label_name} / 当前 / {voice_id}", voice_id))
-                seen.add(voice_id)
-        return out
+        return service.all_voice_options(self._voice_id_map, self._voice_id_versions)
 
     def _refresh_default_voice_options(self, selected: str | None = None) -> None:
         current = self._combo_voice_id(self.default_voice_id) if selected is None else selected
@@ -983,41 +902,16 @@ class CloudTtsSettingsWidget(QWidget):
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(path.parent)))
 
     def _current_voice_export_payload(self) -> dict[str, Any] | None:
-        character_name = self.character_combo.currentText().strip()
-        voice_id = self._combo_voice_id(self.character_voice_id)
-        if not voice_id:
-            return None
-        record: dict[str, Any] = {}
-        for item in self._voice_id_versions.get(character_name, []):
-            if str(item.get("voice_id") or "").strip() == voice_id:
-                record = dict(item)
-                break
-        payload = {
-            key: value
-            for key, value in record.items()
-            if key not in VOICE_ID_EXPORT_EXCLUDED_KEYS
-            and value not in (None, "", [], {})
-        }
-        payload.update(
-            {
-                "type": "cloud_tts.voice_id",
-                "provider": self._edit_provider_slug,
-                "provider_label": self._provider_label(),
-                "character_name": character_name,
-                "voice_id": voice_id,
-                "model": str(self.model.currentData() or payload.get("model") or ""),
-                "exported_at": int(time.time()),
-            }
+        return service.voice_export_payload(
+            self.character_combo.currentText(),
+            self._combo_voice_id(self.character_voice_id),
+            self._voice_id_versions,
+            provider_slug=self._edit_provider_slug,
+            model=str(self.model.currentData() or ""),
         )
-        return payload
 
     def _voice_export_default_path(self, payload: dict[str, Any]) -> Path:
-        name = str(payload.get("character_name") or "voice").strip() or "voice"
-        voice_id = str(payload.get("voice_id") or "voice_id").strip() or "voice_id"
-        stem = f"{name}_{voice_id}"
-        safe = "".join(ch if ch.isalnum() or ch in "._-" else "_" for ch in stem)
-        safe = safe.strip("._-")[:96] or "cloud_tts_voice_id"
-        return state.project_root() / f"{safe}.json"
+        return service.voice_export_default_path(payload)
 
     def _export_current_voice_id(self) -> None:
         payload = self._current_voice_export_payload()
@@ -1116,27 +1010,15 @@ class CloudTtsSettingsWidget(QWidget):
             self._reference_text_map.pop(name, None)
 
     def _reference_text_for_character(self, char: dict[str, Any]) -> str:
-        name = str(char.get("name") or "").strip()
-        if name:
-            text = self._reference_text_map.get(name, "").strip()
-            if text:
-                return text
-        return str(char.get("prompt_text") or "").strip()
+        return service.reference_text_for_character(char, self._reference_text_map)
 
     def _reference_audio_language_for_name(self, character_name: str) -> str:
-        name = (character_name or "").strip()
-        if not name:
-            return "auto"
-        return state.normalize_voice_language_code(
-            self._reference_audio_language_map.get(name, "auto")
+        return service.reference_audio_language_for_name(
+            character_name, self._reference_audio_language_map
         )
 
     def _reference_audio_for_upload(self, char: dict[str, Any]) -> tuple[Path | None, str]:
-        name = str(char.get("name") or "").strip()
-        local_path = self._local_reference_audio_map.get(name, "").strip()
-        if local_path:
-            return state.project_path(local_path).resolve(), "本地参考音频"
-        return None, "本地参考音频"
+        return service.reference_audio_for_upload(char, self._local_reference_audio_map)
 
     def _store_current_character_voice_id(self) -> None:
         if self._is_gpt_sovits_active():
@@ -1206,153 +1088,6 @@ class CloudTtsSettingsWidget(QWidget):
         }
         return {k: v for k, v in profile.items() if v}
 
-    def _gpt_sovits_state_from_config(self, values: dict[str, Any]) -> dict[str, Any]:
-        keys = {
-            "gpt_sovits_character_profiles",
-            "gpt_sovits_text_split_method",
-            "gpt_sovits_media_type",
-            "gpt_sovits_streaming_mode",
-            "gpt_sovits_batch_size",
-            "gpt_sovits_batch_threshold",
-            "gpt_sovits_split_bucket",
-            "gpt_sovits_fragment_interval",
-            "gpt_sovits_seed",
-            "gpt_sovits_parallel_infer",
-            "gpt_sovits_repetition_penalty",
-            "gpt_sovits_top_k",
-            "gpt_sovits_top_p",
-            "gpt_sovits_temperature",
-            "gpt_sovits_sample_steps",
-            "gpt_sovits_super_sampling",
-        }
-        return {k: values[k] for k in keys if k in values}
-
-    def _coerce_gpt_sovits_profiles(self, value: Any) -> dict[str, dict[str, str]]:
-        if isinstance(value, str):
-            try:
-                value = json.loads(value)
-            except Exception:
-                try:
-                    value = ast.literal_eval(value)
-                except Exception:
-                    value = {}
-        if not isinstance(value, dict):
-            return {}
-        out: dict[str, dict[str, str]] = {}
-        keys = {
-            "ref_audio_path",
-            "gpt_weights_path",
-            "sovits_weights_path",
-            "prompt_text",
-            "prompt_lang",
-            "text_lang",
-        }
-        for key, item in value.items():
-            name = str(key or "").strip()
-            if not name or not isinstance(item, dict):
-                continue
-            profile = {}
-            for field in keys:
-                text_value = str(item.get(field) or "").strip()
-                if text_value:
-                    profile[field] = text_value
-            if profile:
-                out[name] = profile
-        return out
-
-    def _coerce_voice_id_map(self, value: Any) -> dict[str, str]:
-        if isinstance(value, str):
-            try:
-                value = json.loads(value)
-            except Exception:
-                try:
-                    value = ast.literal_eval(value)
-                except Exception:
-                    value = {}
-        if not isinstance(value, dict):
-            return {}
-        out: dict[str, str] = {}
-        for key, item in value.items():
-            name = str(key or "").strip()
-            vid = str(item or "").strip()
-            if name and vid:
-                out[name] = vid
-        return out
-
-    def _coerce_path_map(self, value: Any) -> dict[str, str]:
-        if isinstance(value, str):
-            try:
-                value = json.loads(value)
-            except Exception:
-                try:
-                    value = ast.literal_eval(value)
-                except Exception:
-                    value = {}
-        if not isinstance(value, dict):
-            return {}
-        out: dict[str, str] = {}
-        for key, item in value.items():
-            name = str(key or "").strip()
-            path = str(item or "").strip()
-            if name and path:
-                out[name] = path
-        return out
-
-    def _coerce_text_map(self, value: Any) -> dict[str, str]:
-        if isinstance(value, str):
-            try:
-                value = json.loads(value)
-            except Exception:
-                try:
-                    value = ast.literal_eval(value)
-                except Exception:
-                    value = {}
-        if not isinstance(value, dict):
-            return {}
-        out: dict[str, str] = {}
-        for key, item in value.items():
-            name = str(key or "").strip()
-            text = str(item or "").strip()
-            if name and text:
-                out[name] = text
-        return out
-
-    def _coerce_voice_id_versions(self, value: Any) -> dict[str, list[dict[str, Any]]]:
-        if isinstance(value, str):
-            try:
-                value = json.loads(value)
-            except Exception:
-                try:
-                    value = ast.literal_eval(value)
-                except Exception:
-                    value = {}
-        if not isinstance(value, dict):
-            return {}
-        out: dict[str, list[dict[str, Any]]] = {}
-        for key, items in value.items():
-            name = str(key or "").strip()
-            if not name:
-                continue
-            raw_items = items if isinstance(items, list) else [items]
-            seen: set[str] = set()
-            versions: list[dict[str, Any]] = []
-            for item in raw_items:
-                if isinstance(item, dict):
-                    rec = dict(item)
-                    voice_id = str(rec.get("voice_id") or rec.get("id") or "").strip()
-                else:
-                    rec = {}
-                    voice_id = str(item or "").strip()
-                if not voice_id or voice_id in seen:
-                    continue
-                rec["voice_id"] = voice_id
-                rec.setdefault("created_at", 0)
-                versions.append(rec)
-                seen.add(voice_id)
-            if versions:
-                out[name] = versions
-        return out
-
     def _ensure_voice_version(
         self,
         character_name: str,
@@ -1361,24 +1096,12 @@ class CloudTtsSettingsWidget(QWidget):
         source: str,
         **extra: Any,
     ) -> None:
-        name = (character_name or "").strip()
-        vid = (voice_id or "").strip()
-        if not name or not vid:
-            return
-        versions = self._voice_id_versions.setdefault(name, [])
-        if any(str(item.get("voice_id") or "").strip() == vid for item in versions):
-            return
-        rec: dict[str, Any] = {
-            "voice_id": vid,
-            "source": source,
-            "created_at": int(time.time()),
-        }
-        rec.update({k: v for k, v in extra.items() if v not in (None, "")})
-        versions.append(rec)
+        service.ensure_voice_version(
+            self._voice_id_versions, character_name, voice_id, source=source, **extra
+        )
 
     def _ensure_versions_from_selected_map(self) -> None:
-        for name, voice_id in list(self._voice_id_map.items()):
-            self._ensure_voice_version(name, voice_id, source="selected")
+        service.ensure_versions_from_selected_map(self._voice_id_map, self._voice_id_versions)
 
     def _values(self) -> dict[str, Any]:
         self._store_current_character_voice_id()
@@ -1458,6 +1181,7 @@ class CloudTtsSettingsWidget(QWidget):
         imported = 0
         default_voice_id = ""
         errors: list[str] = []
+        current_character_name = self.character_combo.currentText().strip()
         for item in paths:
             path = Path(item)
             try:
@@ -1466,7 +1190,13 @@ class CloudTtsSettingsWidget(QWidget):
                 errors.append(f"{path.name}: {exc}")
                 continue
             try:
-                count, default_value = self._import_voice_payload(raw, path)
+                count, default_value = service.import_voice_payload(
+                    self._voice_id_map,
+                    self._voice_id_versions,
+                    raw,
+                    path,
+                    current_character=current_character_name,
+                )
             except Exception as exc:
                 errors.append(f"{path.name}: {exc}")
                 continue
@@ -1494,203 +1224,6 @@ class CloudTtsSettingsWidget(QWidget):
         self.status.setText(message)
         if errors:
             QMessageBox.warning(self, "Cloud TTS", "\n".join(errors[:5]))
-
-    def _import_voice_target_character(self, exported_character_name: str) -> tuple[str, str]:
-        exported_name = (exported_character_name or "").strip()
-        current_name = self.character_combo.currentText().strip()
-        if current_name and state.find_character(current_name):
-            return current_name, "current"
-        if exported_name and state.find_character(exported_name):
-            return exported_name, "matched"
-        return IMPORTED_VOICE_BUCKET, "imported"
-
-    def _bind_imported_voice_record(
-        self,
-        character_name: str,
-        voice_id: str,
-        record: dict[str, Any],
-        *,
-        selected: bool,
-    ) -> int:
-        target_name = (character_name or "").strip()
-        vid = (voice_id or "").strip()
-        if not target_name or not vid:
-            return 0
-        clean = dict(record)
-        for key in {"voice_id", *VOICE_ID_EXPORT_EXCLUDED_KEYS}:
-            clean.pop(key, None)
-        clean.setdefault("source", "import")
-        self._ensure_voice_version(target_name, vid, **clean)
-        if selected:
-            self._voice_id_map[target_name] = vid
-        return 1
-
-    def _import_voice_payload(self, raw: Any, source_path: Path) -> tuple[int, str]:
-        if isinstance(raw, list):
-            imported = 0
-            default_voice_id = ""
-            for item in raw:
-                count, default_value = self._import_voice_payload(item, source_path)
-                imported += count
-                if default_value:
-                    default_voice_id = default_value
-            return imported, default_voice_id
-        if not isinstance(raw, dict):
-            return 0, ""
-
-        imported = 0
-        default_voice_id = str(raw.get("default_voice_id") or "").strip()
-        current_character = self.character_combo.currentText().strip()
-        if default_voice_id:
-            target_character = (
-                current_character
-                if current_character and state.find_character(current_character)
-                else IMPORTED_VOICE_BUCKET
-            )
-            self._bind_imported_voice_record(
-                target_character,
-                default_voice_id,
-                {"source": "import_default", "imported_from": str(source_path)},
-                selected=target_character == IMPORTED_VOICE_BUCKET,
-            )
-
-        if "voice_id_map" in raw or "voice_id_versions" in raw or "voice_map" in raw:
-            imported += self._import_voice_config_payload(raw, source_path)
-
-        character_name = str(
-            raw.get("character_name")
-            or raw.get("character")
-            or raw.get("name")
-            or ""
-        ).strip()
-        if character_name:
-            selected = str(
-                raw.get("selected_voice_id")
-                or raw.get("voice_id")
-                or ""
-            ).strip()
-            raw_voices = raw.get("voices") or raw.get("versions") or []
-            if selected and not raw_voices:
-                raw_voices = [raw]
-            target_character, target_mode = self._import_voice_target_character(character_name)
-            if selected and not default_voice_id:
-                default_voice_id = selected
-            counted_voice_ids: set[str] = set()
-            for rec in self._coerce_voice_records(raw_voices):
-                voice_id = str(rec.get("voice_id") or "").strip()
-                clean = dict(rec)
-                clean.pop("voice_id", None)
-                clean.setdefault("source", "import")
-                clean["imported_from"] = str(source_path)
-                if target_mode != "matched" and character_name != target_character:
-                    clean["imported_character_name"] = character_name
-                self._bind_imported_voice_record(
-                    target_character,
-                    voice_id,
-                    clean,
-                    selected=bool(selected and voice_id == selected),
-                )
-                if voice_id not in counted_voice_ids:
-                    counted_voice_ids.add(voice_id)
-                    imported += 1
-                if voice_id and not default_voice_id:
-                    default_voice_id = voice_id
-            if selected:
-                clean = {
-                    "source": "import_selected",
-                    "imported_from": str(source_path),
-                }
-                if target_mode != "matched" and character_name != target_character:
-                    clean["imported_character_name"] = character_name
-                self._bind_imported_voice_record(
-                    target_character,
-                    selected,
-                    clean,
-                    selected=True,
-                )
-                if selected not in counted_voice_ids:
-                    imported += 1
-            return imported, default_voice_id
-
-        voice_id = str(raw.get("voice_id") or raw.get("id") or "").strip()
-        if voice_id and not default_voice_id:
-            default_voice_id = voice_id
-        if voice_id and current_character and state.find_character(current_character):
-            self._bind_imported_voice_record(
-                current_character,
-                voice_id,
-                {"source": "import_manual", "imported_from": str(source_path)},
-                selected=True,
-            )
-            imported += 1
-        elif voice_id:
-            self._bind_imported_voice_record(
-                IMPORTED_VOICE_BUCKET,
-                voice_id,
-                {"source": "import_manual", "imported_from": str(source_path)},
-                selected=True,
-            )
-            imported += 1
-
-        return imported, default_voice_id
-
-    def _import_voice_config_payload(self, raw: dict[str, Any], source_path: Path) -> int:
-        imported = 0
-        counted_voice_ids: set[tuple[str, str]] = set()
-        voice_map = self._coerce_voice_id_map(raw.get("voice_id_map") or raw.get("voice_map"))
-        for name, voice_id in voice_map.items():
-            target_name, target_mode = self._import_voice_target_character(name)
-            clean = {"source": "import_map", "imported_from": str(source_path)}
-            if target_mode != "matched" and name != target_name:
-                clean["imported_character_name"] = name
-            self._bind_imported_voice_record(
-                target_name,
-                voice_id,
-                clean,
-                selected=True,
-            )
-            key = (target_name, voice_id)
-            if key not in counted_voice_ids:
-                counted_voice_ids.add(key)
-                imported += 1
-        versions = self._coerce_voice_id_versions(raw.get("voice_id_versions"))
-        for name, records in versions.items():
-            target_name, target_mode = self._import_voice_target_character(name)
-            for rec in records:
-                voice_id = str(rec.get("voice_id") or "").strip()
-                clean = dict(rec)
-                clean.pop("voice_id", None)
-                clean.setdefault("source", "import_versions")
-                clean["imported_from"] = str(source_path)
-                if target_mode != "matched" and name != target_name:
-                    clean["imported_character_name"] = name
-                self._bind_imported_voice_record(
-                    target_name,
-                    voice_id,
-                    clean,
-                    selected=False,
-                )
-                key = (target_name, voice_id)
-                if key not in counted_voice_ids:
-                    counted_voice_ids.add(key)
-                    imported += 1
-        return imported
-
-    def _coerce_voice_records(self, value: Any) -> list[dict[str, Any]]:
-        raw_items = value if isinstance(value, list) else [value]
-        out: list[dict[str, Any]] = []
-        for item in raw_items:
-            if isinstance(item, dict):
-                rec = dict(item)
-                voice_id = str(rec.get("voice_id") or rec.get("id") or "").strip()
-            else:
-                rec = {}
-                voice_id = str(item or "").strip()
-            if not voice_id:
-                continue
-            rec["voice_id"] = voice_id
-            out.append(rec)
-        return out
 
     # ------------------------------------------------------------------
     # 提示词模板 - 角色约束版本管理
