@@ -19,24 +19,38 @@
 
 ---
 
-## P1 — 抽取 config_service.py（目标版本 0.11.2，patch）
+## P1 — 抽取 config_service.py（目标版本 0.11.2，patch）✅ 完成
 
-- [ ] P1.1 通读 `settings.py`，列出迁出函数清单（写入下方「P1 迁出清单」）
-- [ ] P1.2 新建 `config_service.py`：数据规整层（`coerce_voice_id_map` / `coerce_path_map` /
+- [x] P1.1 通读 `settings.py`，列出迁出函数清单（写入下方「P1 迁出清单」）
+- [x] P1.2 新建 `config_service.py`：数据规整层（`coerce_voice_id_map` / `coerce_path_map` /
       `coerce_text_map` / `coerce_voice_id_versions` / `coerce_gpt_sovits_profiles` /
       `coerce_voice_records` / `valid_choice` / `as_bool`）
-- [ ] P1.3 迁出音色版本管理（`ensure_voice_version` / `ensure_versions_from_selected_map`）
-- [ ] P1.4 迁出导入导出（export payload 构建 / import payload 解析与绑定）
-- [ ] P1.5 迁出 provider 推导（模型选项 / 默认模型 / provider extra 读写包装）
-- [ ] P1.6 迁出角色数据读取（角色列表 / 参考音频与文本查询）
-- [ ] P1.7 `settings.py` 改为调用 service，删除迁出副本（行为零变化）
-- [ ] P1.8 测试迁移：`tests/test_settings_*.py` 中纯逻辑断言改指向 service；新增 service 单测
-- [ ] P1.9 全量测试通过（`python -m pytest tests/ -v`）
-- [ ] P1.10 提交 P1 + bump 0.11.2
+- [x] P1.3 迁出音色版本管理（`ensure_voice_version` / `ensure_versions_from_selected_map`）
+- [x] P1.4 迁出导入导出（export payload 构建 / import payload 解析与绑定）
+- [x] P1.5 迁出 provider 推导（模型选项 / 默认模型 / provider extra 读写包装）
+- [x] P1.6 迁出角色数据读取（参考音频/文本/语言查询；角色列表读取本就在 `state.load_characters`，未重复包装）
+- [x] P1.7 `settings.py` 改为调用 service，删除迁出副本（行为零变化；保留薄委托方法以最小化调用点改动）
+- [x] P1.8 测试迁移：`test_settings_source.py` 迁移函数断言改指向 `config_service.py`；新增 `test_config_service.py`（11 个行为单测）
+- [x] P1.9 全量测试通过（31 passed；在宿主 PR80 工作区 `python -m pytest plugins/cloud_tts/tests/ -v` 运行）
+- [x] P1.10 提交 P1（`0917cdc`）+ bump 0.11.2（`b0ad358`）
 
-### P1 迁出清单（P1.1 完成后填写）
+### P1 迁出清单（已完成迁移）
 
-（待填）
+| config_service.py 函数 | 原 settings.py 来源 | settings.py 现状 |
+|---|---|---|
+| `valid_choice` / `as_bool` | `_valid_choice` / `_as_bool` | 薄委托保留 |
+| `coerce_voice_id_map/path_map/text_map/voice_id_versions/gpt_sovits_profiles/voice_records` | `_coerce_*` 六件套 | 方法删除，调用点直调 service |
+| `gpt_sovits_state_from_config` | `_gpt_sovits_state_from_config` | 同上 |
+| `provider_model_options/default_model/label`、`get/set_provider_extra`、`is_qwen/is_gpt_sovits_provider` | `_current_provider_*` / `_provider_extra` / `_save_provider_extra` / `_provider_label` | 薄委托保留 |
+| `reference_text_for_character` / `reference_audio_language_for_name` / `reference_audio_for_upload` | 同名 `_` 方法 | 薄委托保留（test_settings_widget 依赖） |
+| `ensure_voice_version` / `ensure_versions_from_selected_map` | 同名 `_` 方法 | 薄委托保留（克隆流程调用） |
+| `all_voice_options` | `_all_voice_options` | 薄委托保留 |
+| `voice_export_payload` / `voice_export_default_path` | `_current_voice_export_payload` / `_voice_export_default_path` | 薄包装（从 combo 取参后调 service） |
+| `import_voice_target_character` / `bind_imported_voice_record` / `import_voice_payload` / `import_voice_config_payload` | 同名 `_` 方法 | 方法删除，`_import_voice_ids` 直调 service |
+| 常量 `IMPORTED_VOICE_BUCKET` / `IMPORTED_VOICE_LABEL` / `VOICE_ID_EXPORT_EXCLUDED_KEYS` / `MINIMAX_DEFAULT_MODEL` | settings.py 顶部常量 | 移入 service |
+
+**音色字典约定**：`voice_id_map` / `voice_id_versions` 由调用方持有引用传入，service 原地修改（详见 config_service.py 模块 docstring）。
+**测试运行须知**：测试需在宿主安装目录跑（`<宿主>/plugins/cloud_tts`，仓库文件 cp 同步过去）；沙箱环境下加 `TEMP/TMP` 指向项目内目录 + `--basetemp`。
 
 ---
 
@@ -87,11 +101,13 @@
 
 ## 当前状态
 
-- **进行中**：P1
-- **下一步**：P1.1 通读 settings.py 填写迁出清单
+- **已完成**：P1（0.11.2）
+- **进行中**：P2
+- **下一步**：P2.1 新建 `frontend_contrib.py` API 面
 
 ## 变更日志
 
 | 日期 | 完成项 | 提交 | 备注 |
 |---|---|---|---|
-| 2026-06-10 | 架构文档 v2、本进度文件建立 | — | 分支尚未创建 |
+| 2026-06-10 | 架构文档 v2、本进度文件建立 | 0917cdc（随 P1 一并提交） | 分支 `upgrade/pr80-react-ui` |
+| 2026-06-10 | P1 全部（P1.1–P1.10），31 测试全过 | 0917cdc + b0ad358 | settings.py 2031→约 1500 行；service 层 600+ 行 |
