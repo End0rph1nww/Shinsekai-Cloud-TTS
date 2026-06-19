@@ -150,6 +150,32 @@ def test_bind_voice_updates_map_and_versions(fake_env):
     assert fake_env.configs[state.PROVIDER_SLUG]["voice_id_map"] == {}
 
 
+def test_list_characters_reuses_loaded_rows_without_refinding(fake_env, monkeypatch):
+    monkeypatch.setattr(
+        state,
+        "load_characters",
+        lambda: [
+            {"name": "Hanadan", "prompt_text": "first"},
+            {"name": "Akari", "prompt_text": "second"},
+        ],
+    )
+    monkeypatch.setattr(
+        state,
+        "find_character",
+        lambda name: pytest.fail(f"unexpected character reload for {name}"),
+    )
+
+    result = _run_action(
+        _surface(fake_env),
+        "list_characters",
+        {"provider": state.PROVIDER_SLUG},
+    )
+
+    rows = result["characters"]
+    assert [row["name"] for row in rows] == ["Hanadan", "Akari"]
+    assert [row["prompt_text"] for row in rows] == ["first", "second"]
+
+
 def test_upload_reference_writes_file_and_maps(fake_env):
     surface = _surface(fake_env)
     content = b"RIFF-fake-wav-bytes"
@@ -411,6 +437,7 @@ def test_register_react_contributions_skips_old_host(fake_env):
     assert registered["config"].schema == []
     assert registered["page"].page_id == fc.PAGE_ID
     assert registered["page"].entry.endswith("index.html")
+    assert Path(registered["page"].entry).resolve() == (Path(fc.__file__).resolve().parent / "frontend" / "index.html")
     action_ids = [action.id for action in registered["config"].actions]
     assert action_ids == [
         "list_characters",

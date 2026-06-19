@@ -31,6 +31,7 @@ from plugins.cloud_tts import state
 
 PAGE_ID = "cloud_tts"
 PAGE_TITLE = "Cloud TTS"
+PACKAGE_ROOT = Path(__file__).resolve().parent
 
 PROVIDER_SLUGS = (
     state.PROVIDER_SLUG,
@@ -220,6 +221,12 @@ def _save_values(plugin_root: Path, values: Mapping[str, Any]) -> None:
             merged.get("qwen_language_type") or "Chinese"
         )
     service.set_provider_extra(slug, provider_extra)
+    try:
+        from plugins.cloud_tts import prompt_hook
+
+        prompt_hook.sync_frontend_template_session()
+    except Exception:
+        pass
 
 
 # ----------------------------------------------------------------------
@@ -233,11 +240,12 @@ def _character_row(
     character_name: str,
     *,
     cfg: Mapping[str, Any] | None = None,
+    character: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     cfg = cfg if cfg is not None else _load_provider_config(plugin_root, slug)
     maps = _provider_maps(cfg)
     profiles = service.coerce_gpt_sovits_profiles(cfg.get("gpt_sovits_character_profiles"))
-    char = state.find_character(character_name) or {"name": character_name}
+    char = dict(character) if character is not None else state.find_character(character_name) or {"name": character_name}
     card_reference = state.resolve_reference_audio(char)
     return {
         "name": character_name,
@@ -258,7 +266,13 @@ def _action_list_characters(plugin_root: Path, values: Mapping[str, Any]) -> dic
     slug = _provider_slug(values)
     cfg = _load_provider_config(plugin_root, slug)
     rows = [
-        _character_row(plugin_root, slug, str(char.get("name") or "").strip(), cfg=cfg)
+        _character_row(
+            plugin_root,
+            slug,
+            str(char.get("name") or "").strip(),
+            cfg=cfg,
+            character=char,
+        )
         for char in state.load_characters()
         if str(char.get("name") or "").strip()
     ]
@@ -670,10 +684,11 @@ def build_api_surface(plugin_root: Path) -> FrontendConfigContribution:
 
 
 def build_page(plugin_root: Path) -> FrontendPageContribution:
+    _ = plugin_root
     return FrontendPageContribution(
         page_id=PAGE_ID,
         title=PAGE_TITLE,
-        entry=str(plugin_root / "frontend" / "index.html"),
+        entry=str(PACKAGE_ROOT / "frontend" / "index.html"),
         description="Cloud TTS 音色工作台",
         order=41.0,
     )

@@ -5,12 +5,17 @@ from pathlib import Path
 from sdk.plugin import PluginBase
 from sdk.plugin_host_context import PluginHostContext
 from sdk.register import PluginCapabilityRegistry
-from sdk.types import SettingsUIContribution
+from sdk.types import (
+    FrontendConfigAction,
+    FrontendConfigContribution,
+    FrontendPageContribution,
+    SettingsUIContribution,
+)
 
 from plugins.cloud_tts.adapter import CloudTTSAdapter
 from plugins.cloud_tts.gpt_sovits_adapter import GPTSoVITSApiAdapter
 from plugins.cloud_tts.qwen_adapter import QwenTTSAdapter
-from plugins.cloud_tts import host_hook, prompt_hook, state
+from plugins.cloud_tts import host_hook, prompt_hook, state, ui_service
 
 
 class CloudTtsPlugin(PluginBase):
@@ -56,6 +61,95 @@ class CloudTtsPlugin(PluginBase):
         register.register_tts_adapter(state.PROVIDER_SLUG, CloudTTSAdapter)
         register.register_tts_adapter(state.QWEN_PROVIDER_SLUG, QwenTTSAdapter)
         register.register_tts_adapter(state.GPT_SOVITS_PROVIDER_SLUG, GPTSoVITSApiAdapter)
+
+        def _load_frontend_values():
+            return ui_service.load_values(plugin_root)
+
+        def _save_frontend_values(values):
+            ui_service.save_values(plugin_root, values)
+
+        def _frontend_action(action_id: str):
+            return lambda values: ui_service.run_action(plugin_root, action_id, values)
+
+        register.register_frontend_config_page(
+            FrontendConfigContribution(
+                page_id="cloud_tts",
+                title="Cloud TTS",
+                description="Cloud TTS provider, voice ID and prompt template settings.",
+                schema=[],
+                load_values=_load_frontend_values,
+                save_values=_save_frontend_values,
+                order=41.0,
+                actions=[
+                    FrontendConfigAction(
+                        id="switch_provider",
+                        label="切换 Provider",
+                        run=_frontend_action("switch_provider"),
+                        order=10.0,
+                    ),
+                    FrontendConfigAction(
+                        id="import_voice_ids",
+                        label="导入 voice_id",
+                        run=_frontend_action("import_voice_ids"),
+                        order=20.0,
+                    ),
+                    FrontendConfigAction(
+                        id="export_voice_id",
+                        label="导出 voice_id",
+                        run=_frontend_action("export_voice_id"),
+                        order=30.0,
+                    ),
+                    FrontendConfigAction(
+                        id="upload_voice",
+                        label="上传复刻",
+                        run=_frontend_action("upload_voice"),
+                        order=40.0,
+                    ),
+                    FrontendConfigAction(
+                        id="select_template",
+                        label="切换模板",
+                        run=_frontend_action("select_template"),
+                        order=50.0,
+                    ),
+                    FrontendConfigAction(
+                        id="save_template",
+                        label="保存模板",
+                        run=_frontend_action("save_template"),
+                        order=60.0,
+                    ),
+                    FrontendConfigAction(
+                        id="reset_template",
+                        label="重置模板",
+                        variant="danger",
+                        run=_frontend_action("reset_template"),
+                        order=70.0,
+                    ),
+                    FrontendConfigAction(
+                        id="create_template",
+                        label="新建模板",
+                        run=_frontend_action("create_template"),
+                        order=80.0,
+                    ),
+                    FrontendConfigAction(
+                        id="delete_template",
+                        label="删除模板",
+                        variant="danger",
+                        run=_frontend_action("delete_template"),
+                        order=90.0,
+                    ),
+                ],
+            )
+        )
+        register.register_frontend_page(
+            FrontendPageContribution(
+                page_id="cloud_tts",
+                title="Cloud TTS",
+                entry=str(Path(__file__).resolve().parent / "frontend" / "dist" / "index.html"),
+                description="Cloud TTS standalone plugin page.",
+                order=41.0,
+            )
+        )
+
         def _build_settings(ctx):
             from plugins.cloud_tts.settings import CloudTtsSettingsWidget
 
@@ -70,26 +164,8 @@ class CloudTtsPlugin(PluginBase):
                 order=41.0,
             )
         )
-        _register_react_contributions(register, plugin_root)
 
     def shutdown(self) -> None:
         prompt_hook.uninstall()
         if not state.plugin_manifest_enabled():
             host_hook.uninstall()
-
-
-def _register_react_contributions(register: PluginCapabilityRegistry, plugin_root: Path) -> None:
-    """注册 PR80+ 宿主的 React 插件页；旧宿主缺少注册方法/SDK 类型时静默跳过。
-
-    frontend_contrib 顶层 import 了新 SDK 类型，因此必须延迟到特性检测之后
-    再 import，不得提升到本文件顶部。
-    """
-    if not hasattr(register, "register_frontend_config_page"):
-        return
-    try:
-        from plugins.cloud_tts.frontend_contrib import build_api_surface, build_page
-    except ImportError:
-        return
-    register.register_frontend_config_page(build_api_surface(plugin_root))
-    if hasattr(register, "register_frontend_page"):
-        register.register_frontend_page(build_page(plugin_root))

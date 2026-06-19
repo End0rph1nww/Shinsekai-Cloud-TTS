@@ -1,7 +1,9 @@
 {
-    "model": "speech-2.8-hd",
-    "local_reference_audio_map": {},
-    "reference_audio_language_map": {},
-    "auto_prompt_constraint": false,
-    "protect_translate_tone_tags": true
+  "gpt_sovits_sample_steps": "32",
+  "gpt_sovits_text_split_method": "cut5",
+  "model": "speech-2.8-hd",
+  "gpt_sovits_media_type": "wav",
+  "gpt_sovits_super_sampling": false,
+  "auto_prompt_constraint": false,
+  "protect_translate_tone_tags": true
 }

@@ -84,17 +84,17 @@
 
 ## P3 — neobrutalism 单页前端（目标版本 0.12.x）
 
-- [ ] P3.1 `frontend/index.html` 骨架：全局设置区 + 角色工作台两区 + 粘性锚点导航
-- [ ] P3.2 `frontend/studio.css`：设计令牌（架构文档 §6）+ 卡片/按钮/表单组件
-- [ ] P3.3 `frontend/studio.js`：API 客户端（从 URL query 读 pluginId/pageId；fetch /ui /config /actions）
-- [ ] P3.4 全局设置区落地（provider 切换联动、模型/默认音色、GPT-SoVITS 参数折叠组、约束开关）
-- [ ] P3.5 角色工作台：角色卡网格 + 绑定 voice ID
-- [ ] P3.6 参考音频上传（`<input type="file">` + FileReader → upload_reference）+ 清除
-- [ ] P3.7 克隆 + demo 试听（`/data/` 直链 `<audio>`，自绘播放控件）
-- [ ] P3.8 导入导出（Blob 下载 / FileReader 读 JSON）
-- [ ] P3.9 自绘确认卡（danger 操作），无 key 引导横幅（key_configured=false 时）
-- [ ] P3.10 Tauri 客户端实测：文件框、试听、保存往返、`visibilitychange` 重拉
-- [ ] P3.11 提交 P3 + bump
+- [x] P3.1 `frontend/index.html` 骨架：全局设置区 + 角色工作台两区 + 粘性锚点导航
+- [x] P3.2 `frontend/studio.css`：设计令牌（架构文档 §6）+ 卡片/按钮/表单组件
+- [x] P3.3 `frontend/studio.js`：API 客户端（从 URL query 读 pluginId/pageId；fetch /ui /config /actions）
+- [x] P3.4 全局设置区落地（provider 切换联动、模型/默认音色、GPT-SoVITS 参数折叠组、约束开关）
+- [x] P3.5 角色工作台：角色卡网格 + 绑定 voice ID
+- [x] P3.6 参考音频上传（`<input type="file">` + FileReader → upload_reference）+ 清除
+- [x] P3.7 克隆 + demo 试听（`/data/` 直链 `<audio>`，自绘播放控件）
+- [x] P3.8 导入导出（Blob 下载 / FileReader 读 JSON）
+- [x] P3.9 自绘确认卡（danger 操作），无 key 引导横幅（key_configured=false 时）
+- [ ] P3.10 Tauri 客户端实测：文件框、试听、保存往返、`visibilitychange` 重拉（已完成静态浏览器预览和移动宽度检查；真实 Tauri 客户端仍需宿主运行验证）
+- [ ] P3.11 提交 P3 + bump（版本已更新到 0.12.1；提交待执行）
 
 ---
 
@@ -113,9 +113,9 @@
 
 ## 当前状态
 
-- **已完成**：P1（0.11.2）、P2（0.12.0）
-- **进行中**：P3
-- **下一步**：P3.1 `frontend/index.html` 正式骨架（替换占位页）
+- **已完成**：P1（0.11.2）、P2（0.12.0）、P3.1–P3.9（0.12.1 工作树）
+- **进行中**：P3.10 / P3.11
+- **下一步**：在真实 Tauri 客户端验证文件框、试听、保存往返和 `visibilitychange` 重拉；随后提交 P3。
 
 ## 变更日志
 
@@ -124,3 +124,4 @@
 | 2026-06-10 | 架构文档 v2、本进度文件建立 | 0917cdc（随 P1 一并提交） | 分支 `upgrade/pr80-react-ui` |
 | 2026-06-10 | P1 全部（P1.1–P1.10），31 测试全过 | 0917cdc + b0ad358 | settings.py 2031→约 1500 行；service 层 600+ 行 |
 | 2026-06-10 | P2 全部（P2.1–P2.9），45 测试全过 + 宿主冒烟 | 11b5111 + d6f58ee | 10 actions；P2.8 完整路由实测并入 P3.10 |
+| 2026-06-14 | P3.1–P3.9，React 单页、样式、API 客户端和静态契约测试 | 未提交 | 静态测试 3 passed；临时宿主形态 48 passed；浏览器桌面/移动预览无控制台错误 |

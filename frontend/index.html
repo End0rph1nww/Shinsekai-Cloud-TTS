@@ -4,36 +4,317 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Cloud TTS</title>
-    <style>
-      /* P3 落地 neobrutalism 设计系统前的占位页（studio.css / studio.js 在 P3 引入） */
-      body {
-        margin: 0;
-        display: grid;
-        place-items: center;
-        min-height: 100vh;
-        font-family: system-ui, "Microsoft YaHei", sans-serif;
-        background: #f5f1e8;
-        color: #111;
-      }
-      .card {
-        border: 3px solid #111;
-        border-radius: 10px;
-        box-shadow: 5px 5px 0 0 #111;
-        background: #fff;
-        padding: 24px 32px;
-        max-width: 420px;
-      }
-      h1 { font-size: 20px; font-weight: 800; margin: 0 0 8px; }
-      p { margin: 4px 0; font-size: 14px; line-height: 1.6; }
-      code { background: #ffd23f; padding: 0 4px; border: 1px solid #111; border-radius: 4px; }
-    </style>
+    <link rel="stylesheet" href="./studio.css" />
+    <script type="module" src="./studio.js"></script>
   </head>
   <body>
-    <main class="card">
-      <h1>Cloud TTS 音色工作台</h1>
-      <p>React 工作台界面将在 P3 阶段上线。</p>
-      <p>当前 API 面已可用：<code>load_values</code> / <code>save_values</code> / 10 个 actions。</p>
-      <p>在此之前请继续使用 Qt 设置窗口的 Cloud TTS 页。</p>
-    </main>
+    <div id="cloud-tts-app" class="app-shell" data-state="loading">
+      <header class="hero-bar">
+        <div class="hero-bar__copy">
+          <span class="stamp">Cloud TTS</span>
+          <h1>音色工作台</h1>
+          <p id="status-line" class="status-line">正在连接插件桥。</p>
+        </div>
+        <div class="hero-bar__actions">
+          <button id="refresh-page" class="nb-button nb-button--ghost" type="button">刷新</button>
+          <button id="save-global" class="nb-button nb-button--primary" type="button">保存全局</button>
+        </div>
+      </header>
+
+      <nav class="anchor-nav" aria-label="Cloud TTS sections">
+        <a href="#global-settings">全局设置</a>
+        <a href="#character-workbench">角色工作台</a>
+        <a href="#clone-panel">克隆试听</a>
+        <a href="#constraint-editor">提示词约束</a>
+      </nav>
+
+      <main class="studio-layout">
+        <section id="global-settings" class="section-band" aria-labelledby="global-title">
+          <div class="section-band__heading">
+            <span class="section-index">01</span>
+            <div>
+              <h2 id="global-title">全局设置</h2>
+              <p>Provider、模型、默认音色和推理参数。</p>
+            </div>
+          </div>
+
+          <div id="key-banner" class="key-banner" hidden>
+            宿主 API 设置页还没有可用密钥。
+          </div>
+
+          <div class="settings-grid">
+            <label class="field">
+              <span>Provider</span>
+              <select id="provider-select"></select>
+            </label>
+            <label class="field">
+              <span>模型</span>
+              <select id="model-select"></select>
+            </label>
+            <label id="default-voice-field" class="field">
+              <span>默认 voice_id</span>
+              <input id="default-voice-input" list="default-voice-options" autocomplete="off" />
+              <datalist id="default-voice-options"></datalist>
+            </label>
+            <label id="qwen-language-field" class="field">
+              <span>Qwen 语言</span>
+              <select id="qwen-language-select">
+                <option value="Chinese">中文</option>
+                <option value="English">英语</option>
+                <option value="Japanese">日语</option>
+                <option value="Korean">韩语</option>
+                <option value="French">法语</option>
+                <option value="German">德语</option>
+                <option value="Russian">俄语</option>
+                <option value="Italian">意大利语</option>
+                <option value="Spanish">西班牙语</option>
+                <option value="Portuguese">葡萄牙语</option>
+              </select>
+            </label>
+          </div>
+
+          <div class="switch-row">
+            <label class="switch-card">
+              <input id="auto-prompt-constraint" type="checkbox" />
+              <span>
+                <strong>自动注入约束</strong>
+                <small>MiniMax 当前 provider 时生效</small>
+              </span>
+            </label>
+            <label class="switch-card">
+              <input id="protect-tone-tags" type="checkbox" />
+              <span>
+                <strong>保护语气标签</strong>
+                <small>保留 translate 里的括号标签</small>
+              </span>
+            </label>
+          </div>
+
+          <details id="gsv-global-panel" class="nb-card foldout">
+            <summary>GPT SoVITS Cloud 参数</summary>
+            <div class="settings-grid settings-grid--dense">
+              <label class="field">
+                <span>切分方式</span>
+                <input id="gpt_sovits_text_split_method" autocomplete="off" />
+              </label>
+              <label class="field">
+                <span>媒体格式</span>
+                <select id="gpt_sovits_media_type">
+                  <option value="wav">wav</option>
+                  <option value="mp3">mp3</option>
+                  <option value="ogg">ogg</option>
+                  <option value="aac">aac</option>
+                  <option value="raw">raw</option>
+                </select>
+              </label>
+              <label class="field">
+                <span>流式模式</span>
+                <input id="gpt_sovits_streaming_mode" autocomplete="off" />
+              </label>
+              <label class="field">
+                <span>Batch size</span>
+                <input id="gpt_sovits_batch_size" inputmode="numeric" autocomplete="off" />
+              </label>
+              <label class="field">
+                <span>Batch threshold</span>
+                <input id="gpt_sovits_batch_threshold" inputmode="decimal" autocomplete="off" />
+              </label>
+              <label class="field">
+                <span>Split bucket</span>
+                <input id="gpt_sovits_split_bucket" autocomplete="off" />
+              </label>
+              <label class="field">
+                <span>Fragment interval</span>
+                <input id="gpt_sovits_fragment_interval" inputmode="decimal" autocomplete="off" />
+              </label>
+              <label class="field">
+                <span>Seed</span>
+                <input id="gpt_sovits_seed" inputmode="numeric" autocomplete="off" />
+              </label>
+              <label class="field">
+                <span>Parallel infer</span>
+                <input id="gpt_sovits_parallel_infer" autocomplete="off" />
+              </label>
+              <label class="field">
+                <span>Repetition penalty</span>
+                <input id="gpt_sovits_repetition_penalty" inputmode="decimal" autocomplete="off" />
+              </label>
+              <label class="field">
+                <span>Top K</span>
+                <input id="gpt_sovits_top_k" inputmode="numeric" autocomplete="off" />
+              </label>
+              <label class="field">
+                <span>Top P</span>
+                <input id="gpt_sovits_top_p" inputmode="decimal" autocomplete="off" />
+              </label>
+              <label class="field">
+                <span>Temperature</span>
+                <input id="gpt_sovits_temperature" inputmode="decimal" autocomplete="off" />
+              </label>
+              <label class="field">
+                <span>Sample steps</span>
+                <input id="gpt_sovits_sample_steps" inputmode="numeric" autocomplete="off" />
+              </label>
+              <label class="switch-card switch-card--compact">
+                <input id="gpt_sovits_super_sampling" type="checkbox" />
+                <span><strong>Super sampling</strong></span>
+              </label>
+            </div>
+          </details>
+        </section>
+
+        <section id="character-workbench" class="section-band section-band--workspace" aria-labelledby="character-title">
+          <div class="section-band__heading">
+            <span class="section-index">02</span>
+            <div>
+              <h2 id="character-title">角色工作台</h2>
+              <p id="character-count">暂无角色。</p>
+            </div>
+          </div>
+
+          <div class="workbench-grid">
+            <aside class="character-rail" aria-label="角色列表">
+              <div id="character-grid" class="character-grid"></div>
+            </aside>
+
+            <div class="tool-stack">
+              <section class="nb-card tool-panel" aria-labelledby="voice-title">
+                <div class="tool-panel__head">
+                  <h3 id="voice-title">音色绑定</h3>
+                  <span id="selected-character-pill" class="pill">未选择</span>
+                </div>
+                <form id="voice-bind-form" class="inline-form">
+                  <label class="field">
+                    <span>voice_id</span>
+                    <input id="voice-id-input" list="voice-option-list" autocomplete="off" />
+                    <datalist id="voice-option-list"></datalist>
+                  </label>
+                  <button class="nb-button nb-button--primary" type="submit">绑定</button>
+                </form>
+                <div id="voice-version-list" class="version-list"></div>
+              </section>
+
+              <section class="nb-card tool-panel" aria-labelledby="reference-title">
+                <div class="tool-panel__head">
+                  <h3 id="reference-title">参考音频</h3>
+                  <button id="clear-reference" class="nb-button nb-button--danger" type="button">清除</button>
+                </div>
+                <input id="reference-upload" type="file" accept=".wav,.mp3,.m4a,.flac,.ogg,.aac,audio/*" />
+                <div class="settings-grid">
+                  <label class="field">
+                    <span>参考语言</span>
+                    <select id="reference-language-select">
+                      <option value="auto">跟随主菜单</option>
+                      <option value="zh">中文</option>
+                      <option value="ja">日语</option>
+                      <option value="yue">粤语</option>
+                      <option value="en">英语</option>
+                    </select>
+                  </label>
+                  <label class="field field--wide">
+                    <span>参考文本</span>
+                    <textarea id="reference-text-input" rows="3"></textarea>
+                  </label>
+                </div>
+                <div class="path-box" id="reference-path">未绑定参考音频</div>
+                <button id="upload-reference" class="nb-button nb-button--secondary" type="button">上传参考</button>
+              </section>
+
+              <section id="clone-panel" class="nb-card tool-panel" aria-labelledby="clone-title">
+                <div class="tool-panel__head">
+                  <h3 id="clone-title">克隆试听</h3>
+                  <button id="clone-voice" class="nb-button nb-button--primary" type="button">克隆</button>
+                </div>
+                <div id="clone-progress" class="progress-stripe" hidden></div>
+                <div class="audio-strip">
+                  <button id="play-demo" class="nb-button nb-button--secondary" type="button" disabled>播放</button>
+                  <span id="demo-path" class="path-box">暂无 demo</span>
+                  <audio id="clone-audio" preload="metadata"></audio>
+                </div>
+              </section>
+
+              <section class="nb-card tool-panel" aria-labelledby="import-title">
+                <div class="tool-panel__head">
+                  <h3 id="import-title">导入导出</h3>
+                  <div class="button-row">
+                    <button id="export-voice" class="nb-button nb-button--secondary" type="button">导出</button>
+                    <button id="import-voice" class="nb-button nb-button--danger" type="button">导入</button>
+                  </div>
+                </div>
+                <input id="voice-import-file" type="file" accept="application/json,.json" hidden />
+                <div id="import-summary" class="path-box">等待 JSON</div>
+              </section>
+
+              <section class="nb-card tool-panel" aria-labelledby="gsv-profile-title">
+                <div class="tool-panel__head">
+                  <h3 id="gsv-profile-title">GSV Profile</h3>
+                  <button id="save-gsv-profile" class="nb-button nb-button--primary" type="button">保存</button>
+                </div>
+                <form id="gsv-profile-form" class="settings-grid">
+                  <label class="field field--wide">
+                    <span>服务端参考音频</span>
+                    <input id="gsv-ref-audio-path" autocomplete="off" />
+                  </label>
+                  <label class="field field--wide">
+                    <span>GPT weights</span>
+                    <input id="gsv-gpt-weights-path" autocomplete="off" />
+                  </label>
+                  <label class="field field--wide">
+                    <span>SoVITS weights</span>
+                    <input id="gsv-sovits-weights-path" autocomplete="off" />
+                  </label>
+                  <label class="field field--wide">
+                    <span>Prompt text</span>
+                    <textarea id="gsv-prompt-text" rows="3"></textarea>
+                  </label>
+                  <label class="field">
+                    <span>Prompt lang</span>
+                    <input id="gsv-prompt-lang" autocomplete="off" />
+                  </label>
+                  <label class="field">
+                    <span>Text lang</span>
+                    <input id="gsv-text-lang" autocomplete="off" />
+                  </label>
+                </form>
+              </section>
+
+              <section id="constraint-editor" class="nb-card tool-panel" aria-labelledby="constraint-title">
+                <div class="tool-panel__head">
+                  <h3 id="constraint-title">提示词约束</h3>
+                  <button id="save-constraint" class="nb-button nb-button--primary" type="button">保存</button>
+                </div>
+                <div class="settings-grid">
+                  <label class="field">
+                    <span>语言版本</span>
+                    <select id="constraint-version-select"></select>
+                  </label>
+                  <label class="field">
+                    <span>版本名</span>
+                    <input id="constraint-name-input" autocomplete="off" />
+                  </label>
+                  <label class="field field--wide">
+                    <span>约束文本</span>
+                    <textarea id="constraint-textarea" rows="12"></textarea>
+                  </label>
+                </div>
+              </section>
+            </div>
+          </div>
+        </section>
+      </main>
+
+      <div id="confirm-panel" class="confirm-overlay" hidden role="dialog" aria-modal="true" aria-labelledby="confirm-title">
+        <div class="confirm-card nb-card">
+          <h2 id="confirm-title">确认操作</h2>
+          <p id="confirm-message">确定继续？</p>
+          <div class="button-row">
+            <button id="confirm-cancel" class="nb-button nb-button--ghost" type="button">取消</button>
+            <button id="confirm-ok" class="nb-button nb-button--danger" type="button">继续</button>
+          </div>
+        </div>
+      </div>
+
+      <div id="toast-region" class="toast-region" aria-live="polite" aria-atomic="true"></div>
+    </div>
   </body>
 </html>

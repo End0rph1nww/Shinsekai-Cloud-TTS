@@ -1,0 +1,1582 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Cloud TTS</title>
+  <style>
+    :root {
+      --bg: #fff7fa;
+      --paper: #fffefe;
+      --paper-2: #fff0f5;
+      --ink: #3f2230;
+      --muted: #927483;
+      --line: #4b2738;
+      --accent: #e37f9c;
+      --accent-strong: #bf536f;
+      --accent-soft: #f8d5e0;
+      --pink: #fae2ea;
+      --pink-strong: #eca1b8;
+      --lavender: #f0e6f8;
+      --mint: #d7f1e8;
+      --yellow: #fff0c8;
+      --danger: #e36b8b;
+      --shadow: 4px 4px 0 var(--line);
+      --shadow-small: 3px 3px 0 var(--line);
+      color: var(--ink);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-size: 14px;
+      line-height: 1.45;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background:
+        linear-gradient(90deg, rgba(255, 255, 255, 0.72) 1px, transparent 1px),
+        linear-gradient(rgba(227, 127, 156, 0.12) 1px, transparent 1px),
+        radial-gradient(circle at 18% 14%, rgba(255, 255, 255, 0.86), transparent 34%),
+        linear-gradient(120deg, rgba(255, 242, 247, 0.95), rgba(255, 250, 252, 0.95) 48%, rgba(252, 235, 242, 0.88)),
+        var(--bg);
+      background-size: 32px 32px, 32px 32px, auto, auto, auto;
+    }
+
+    button,
+    input,
+    select,
+    textarea {
+      color: inherit;
+      font: inherit;
+    }
+
+    button {
+      cursor: pointer;
+    }
+
+    button:disabled,
+    input:disabled,
+    select:disabled,
+    textarea:disabled {
+      cursor: not-allowed;
+      opacity: 0.62;
+    }
+
+    .page {
+      min-height: 100vh;
+      padding: 12px 18px 18px;
+    }
+
+    .shell {
+      max-width: 1320px;
+      margin: 0 auto;
+    }
+
+    .topbar {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 14px;
+      align-items: center;
+      margin-bottom: 14px;
+    }
+
+    .title {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      align-items: center;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: 26px;
+      line-height: 1;
+      letter-spacing: 0;
+    }
+
+    .provider-pill {
+      border: 2px solid var(--line);
+      background: var(--pink);
+      box-shadow: var(--shadow-small);
+      font-weight: 900;
+      padding: 6px 10px;
+    }
+
+    .setup-notice {
+      border: 2px solid var(--line);
+      background: #fff8e8;
+      box-shadow: 2px 2px 0 var(--line);
+      padding: 10px 12px;
+      margin-bottom: 14px;
+      font-weight: 850;
+      line-height: 1.45;
+    }
+
+    .toast-region {
+      position: fixed;
+      left: 50%;
+      bottom: 18px;
+      width: min(680px, calc(100vw - 32px));
+      transform: translateX(-50%);
+      z-index: 40;
+      pointer-events: none;
+    }
+
+    .toast {
+      border: 2px solid var(--line);
+      background: #fffafc;
+      box-shadow: 4px 4px 0 var(--line);
+      padding: 10px 13px;
+      font-weight: 850;
+      line-height: 1.45;
+      opacity: 1;
+      transform: translateY(0);
+      transition: opacity 0.16s ease, transform 0.16s ease;
+      pointer-events: auto;
+    }
+
+    .toast[data-visible="false"] {
+      opacity: 0;
+      transform: translateY(10px);
+      pointer-events: none;
+    }
+
+    .toast[data-kind="ok"] {
+      background: #fffafc;
+    }
+
+    .toast[data-kind="error"] {
+      background: var(--danger);
+    }
+
+    .tabs {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 9px;
+      margin-bottom: 14px;
+    }
+
+    .tab {
+      min-height: 58px;
+      border: 2px solid var(--line);
+      border-radius: 0;
+      background: var(--paper);
+      box-shadow: 2px 2px 0 var(--line);
+      padding: 9px 12px;
+      text-align: left;
+      transition: transform 0.12s ease, box-shadow 0.12s ease, background 0.12s ease;
+    }
+
+    .tab:hover {
+      transform: translate(-2px, -2px);
+      box-shadow: 4px 4px 0 var(--line);
+    }
+
+    .tab:active {
+      transform: translate(2px, 2px);
+      box-shadow: 1px 1px 0 var(--line);
+    }
+
+    .tab[aria-selected="true"] {
+      background: var(--accent-soft);
+    }
+
+    .tab strong,
+    .tab span {
+      display: block;
+    }
+
+    .tab strong {
+      font-size: 15px;
+      font-weight: 950;
+    }
+
+    .tab span {
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 750;
+      margin-top: 3px;
+    }
+
+    .subtabs {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin: -2px 0 14px;
+    }
+
+    .subtab {
+      min-height: 42px;
+      border: 2px solid var(--line);
+      border-radius: 0;
+      background: var(--paper);
+      box-shadow: 2px 2px 0 var(--line);
+      padding: 8px 12px;
+      font-weight: 950;
+      transition: transform 0.12s ease, box-shadow 0.12s ease, background 0.12s ease;
+    }
+
+    .subtab:hover {
+      transform: translate(-2px, -2px);
+      box-shadow: 4px 4px 0 var(--line);
+    }
+
+    .subtab:active {
+      transform: translate(2px, 2px);
+      box-shadow: 1px 1px 0 var(--line);
+    }
+
+    .subtab[aria-selected="true"] {
+      background: var(--accent-soft);
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: minmax(280px, 0.86fr) minmax(360px, 1.18fr) minmax(310px, 0.96fr);
+      gap: 16px;
+      align-items: start;
+    }
+
+    .content-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr);
+      gap: 16px;
+      align-items: start;
+      justify-items: center;
+    }
+
+    .content-grid .panel {
+      width: min(860px, 100%);
+      max-width: 860px;
+      justify-self: center;
+    }
+
+    .panel {
+      border: 2px solid var(--line);
+      border-radius: 0;
+      background: var(--paper);
+      box-shadow: var(--shadow);
+      padding: 13px;
+      min-width: 0;
+    }
+
+    .panel h2 {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      margin: 0 0 12px;
+      font-size: 17px;
+      line-height: 1.2;
+      letter-spacing: 0;
+    }
+
+    .section-tag {
+      display: inline-block;
+      border: 2px solid var(--line);
+      background: var(--accent);
+      box-shadow: 2px 2px 0 var(--line);
+      padding: 3px 7px;
+      font-size: 11px;
+      font-weight: 950;
+      white-space: nowrap;
+    }
+
+    .stack {
+      display: grid;
+      gap: 12px;
+    }
+
+    .field {
+      display: grid;
+      gap: 6px;
+      min-width: 0;
+    }
+
+    .field label {
+      font-weight: 900;
+      color: var(--ink);
+    }
+
+    .field small {
+      color: var(--muted);
+      font-weight: 700;
+    }
+
+    .input,
+    .select,
+    .textarea {
+      width: 100%;
+      min-height: 40px;
+      border: 2px solid var(--line);
+      border-radius: 0;
+      background: #ffffff;
+      box-shadow: 2px 2px 0 rgba(37, 22, 29, 0.22);
+      padding: 8px 10px;
+      outline: none;
+    }
+
+    .textarea {
+      min-height: 220px;
+      resize: vertical;
+    }
+
+    .input:focus,
+    .select:focus,
+    .textarea:focus {
+      background: #fff7fa;
+      box-shadow: 4px 4px 0 var(--accent-strong);
+    }
+
+    .row {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 8px;
+      align-items: end;
+    }
+
+    .split {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+    }
+
+    .btn-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+    }
+
+    .btn {
+      min-height: 40px;
+      border: 2px solid var(--line);
+      border-radius: 0;
+      background: #ffffff;
+      box-shadow: var(--shadow-small);
+      padding: 8px 11px;
+      font-weight: 950;
+      transition: transform 0.12s ease, box-shadow 0.12s ease, background 0.12s ease;
+      white-space: nowrap;
+    }
+
+    .btn:hover {
+      transform: translate(-2px, -2px);
+      box-shadow: 5px 5px 0 var(--line);
+    }
+
+    .btn:active {
+      transform: translate(2px, 2px);
+      box-shadow: 1px 1px 0 var(--line);
+    }
+
+    .btn.primary {
+      background: var(--accent);
+    }
+
+    .btn.pink {
+      background: var(--accent-soft);
+    }
+
+    .btn.danger {
+      background: var(--danger);
+    }
+
+    .btn.ghost {
+      background: var(--paper-2);
+    }
+
+    .switch-row {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      justify-content: space-between;
+      border: 2px solid var(--line);
+      background: #ffffff;
+      padding: 9px 10px;
+      box-shadow: 2px 2px 0 rgba(37, 22, 29, 0.2);
+    }
+
+    .switch-row > span {
+      font-weight: 900;
+    }
+
+    .switch-copy {
+      display: grid;
+      gap: 3px;
+      min-width: 0;
+    }
+
+    .switch-copy .switch-title {
+      font-weight: 900;
+    }
+
+    .switch-copy small {
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 760;
+      line-height: 1.35;
+    }
+
+    .toggle {
+      width: 52px;
+      height: 28px;
+      border: 2px solid var(--line);
+      border-radius: 0;
+      background: #ffffff;
+      padding: 2px;
+      position: relative;
+    }
+
+    .toggle::after {
+      content: "";
+      display: block;
+      width: 20px;
+      height: 20px;
+      border: 2px solid var(--line);
+      background: var(--paper-2);
+      transition: transform 0.12s ease, background 0.12s ease;
+    }
+
+    .toggle[aria-pressed="true"] {
+      background: var(--accent);
+    }
+
+    .toggle[aria-pressed="true"]::after {
+      background: #fff7fa;
+      transform: translateX(22px);
+    }
+
+    .path-chip {
+      display: block;
+      overflow-wrap: anywhere;
+      border: 2px solid var(--line);
+      background: var(--paper-2);
+      padding: 7px 9px;
+      font-size: 12px;
+      font-weight: 800;
+    }
+
+    .audio-player {
+      width: 100%;
+      min-height: 44px;
+      border: 2px solid var(--line);
+      border-radius: 0;
+      background: #ffffff;
+      box-shadow: 2px 2px 0 rgba(37, 22, 29, 0.22);
+    }
+
+    .empty {
+      border: 2px dashed var(--line);
+      background: #ffffff;
+      padding: 12px;
+      color: var(--muted);
+      font-weight: 800;
+    }
+
+    .hidden {
+      display: none !important;
+    }
+
+    .modal-backdrop {
+      position: fixed;
+      inset: 0;
+      display: grid;
+      place-items: center;
+      padding: 18px;
+      background: rgba(21, 16, 23, 0.28);
+      z-index: 20;
+    }
+
+    .modal {
+      width: min(860px, 100%);
+      max-height: min(760px, 92vh);
+      display: grid;
+      grid-template-rows: auto auto minmax(220px, 1fr) auto;
+      gap: 10px;
+      border: 2px solid var(--line);
+      background: var(--paper);
+      box-shadow: 8px 8px 0 var(--line);
+      padding: 14px;
+    }
+
+    .modal-title {
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      align-items: center;
+    }
+
+    .modal-title h3 {
+      margin: 0;
+      font-size: 18px;
+    }
+
+    .browser-roots {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+
+    .browser-list {
+      min-height: 0;
+      overflow: auto;
+      border: 2px solid var(--line);
+      background: #ffffff;
+    }
+
+    .browser-entry {
+      width: 100%;
+      display: grid;
+      grid-template-columns: 86px minmax(0, 1fr) 90px;
+      gap: 10px;
+      align-items: center;
+      border: 0;
+      border-bottom: 2px solid var(--line);
+      background: #ffffff;
+      padding: 9px 10px;
+      text-align: left;
+      box-shadow: none;
+    }
+
+    .browser-entry:hover,
+    .browser-entry[aria-selected="true"] {
+      background: #fff0f5;
+    }
+
+    .browser-entry:last-child {
+      border-bottom: 0;
+    }
+
+    .browser-kind {
+      font-weight: 950;
+    }
+
+    .browser-name {
+      overflow-wrap: anywhere;
+      font-weight: 800;
+    }
+
+    .download-link {
+      color: var(--ink);
+      text-decoration: underline;
+      font-weight: 950;
+    }
+
+    @media (max-width: 1060px) {
+      .grid {
+        grid-template-columns: 1fr;
+      }
+
+      .topbar {
+        grid-template-columns: 1fr;
+      }
+
+      .toast-region {
+        bottom: 12px;
+        width: calc(100vw - 24px);
+      }
+    }
+
+    @media (max-width: 720px) {
+      .page {
+        padding: 12px;
+      }
+
+      .tabs,
+      .split,
+      .row {
+        grid-template-columns: 1fr;
+      }
+
+      h1 {
+        font-size: 26px;
+      }
+
+      .panel {
+        padding: 12px;
+        box-shadow: 4px 4px 0 var(--line);
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <div class="shell" id="app">
+      <div class="topbar">
+        <div class="title">
+          <h1>Cloud TTS</h1>
+          <span class="provider-pill">Loading</span>
+        </div>
+      </div>
+      <div class="setup-notice" role="note">请先前往“AI服务”配置页选择对应云端TTS，在附加配置中填写 BASE URL 和 APIKEY。</div>
+      <div class="toast-region" aria-live="polite" aria-atomic="true">
+        <div class="toast" data-kind="ok" data-visible="true">正在载入插件页面...</div>
+      </div>
+    </div>
+  </main>
+  <script>
+    const PAGE_ID = "cloud_tts";
+    const DEFAULT_PLUGIN_ID = "com.shinsekai.cloud_tts";
+    const params = new URLSearchParams(window.location.search);
+    const pluginId = params.get("pluginId") || DEFAULT_PLUGIN_ID;
+    const app = document.getElementById("app");
+    let snapshot = null;
+    let saveTimer = 0;
+    let saving = false;
+    let saveAgain = false;
+    let browserState = null;
+    let lastDownload = null;
+    let activeSection = "base";
+    let selectedCloneDemoId = "";
+    let toastTimer = 0;
+
+    function h(value) {
+      return String(value ?? "")
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;");
+    }
+
+    function enc(value) {
+      return encodeURIComponent(String(value));
+    }
+
+    function downloadUrlForPath(path) {
+      const value = String(path || "").trim();
+      return value ? `/api/download?path=${enc(value)}` : "";
+    }
+
+    async function requestJson(path, options = {}) {
+      const init = {
+        method: options.method || "GET",
+        headers: { "Content-Type": "application/json" },
+      };
+      if (options.body !== undefined) {
+        init.body = JSON.stringify(options.body);
+      }
+      const res = await fetch(path, init);
+      const text = await res.text();
+      let data = {};
+      if (text) {
+        try {
+          data = JSON.parse(text);
+        } catch (_err) {
+          data = { error: text };
+        }
+      }
+      if (!res.ok) {
+        throw new Error(String(data.error || data.message || `HTTP ${res.status}`));
+      }
+      return data;
+    }
+
+    function currentDraft() {
+      if (!snapshot.draft) snapshot.draft = {};
+      return snapshot.draft;
+    }
+
+    function ensureMap(key) {
+      const draft = currentDraft();
+      if (!draft[key] || typeof draft[key] !== "object" || Array.isArray(draft[key])) {
+        draft[key] = {};
+      }
+      return draft[key];
+    }
+
+    function providerVisibility() {
+      return snapshot.providerVisibility || {};
+    }
+
+    function isMiniMax() {
+      return !!providerVisibility().isMiniMax;
+    }
+
+    function isQwen() {
+      return !!providerVisibility().isQwen;
+    }
+
+    function isGsv() {
+      return !!providerVisibility().isGptSovits;
+    }
+
+    function providerSections() {
+      if (isMiniMax()) {
+        return [
+          { id: "base", label: "基础" },
+          { id: "voice", label: "音色工作台" },
+          { id: "template", label: "提示词模板" },
+        ];
+      }
+      if (isQwen()) {
+        return [
+          { id: "base", label: "基础" },
+          { id: "voice", label: "音色工作台" },
+        ];
+      }
+      return [
+        { id: "base", label: "基础参数" },
+        { id: "voice", label: "角色路径" },
+      ];
+    }
+
+    function normalizeActiveSection() {
+      const sections = providerSections();
+      if (!sections.some((item) => item.id === activeSection)) {
+        activeSection = sections[0]?.id || "base";
+      }
+    }
+
+    function voiceProviderName() {
+      if (isQwen()) return "Qwen";
+      if (isMiniMax()) return "MiniMax";
+      if (isGsv()) return "GPT SoVITS";
+      return "Cloud TTS";
+    }
+
+    function cloneDemoHistory() {
+      return Array.isArray(snapshot.cloneDemoHistory) ? snapshot.cloneDemoHistory : [];
+    }
+
+    function ensureSelectedCloneDemo() {
+      const demos = cloneDemoHistory();
+      if (!demos.length) {
+        selectedCloneDemoId = "";
+        return null;
+      }
+      let record = demos.find((item) => item.id === selectedCloneDemoId);
+      if (!record) {
+        record = demos[0];
+        selectedCloneDemoId = record.id || "";
+      }
+      return record;
+    }
+
+    function selectedName() {
+      return String(snapshot.currentCharacter || "");
+    }
+
+    function selectedCharacterRecord(name) {
+      return (snapshot.characters || []).find((item) => item.name === name) || {};
+    }
+
+    function optionHtml(options, selectedValue) {
+      return (options || []).map((item) => {
+        const selected = String(item.value ?? "") === String(selectedValue ?? "") ? " selected" : "";
+        return `<option value="${h(item.value)}"${selected}>${h(item.label ?? item.value)}</option>`;
+      }).join("");
+    }
+
+    function datalistHtml(id, options) {
+      return `<datalist id="${h(id)}">${(options || []).map((item) => (
+        `<option value="${h(item.label ?? item.value)}" label="${h(item.value)}"></option>`
+      )).join("")}</datalist>`;
+    }
+
+    function resolveVoiceValue(options, text) {
+      const raw = String(text || "").trim();
+      for (const item of options || []) {
+        if (raw === String(item.label ?? "").trim()) return String(item.value ?? "").trim();
+        if (raw === String(item.value ?? "").trim()) return String(item.value ?? "").trim();
+      }
+      return raw;
+    }
+
+    function displayVoiceLabel(options, voiceId) {
+      const raw = String(voiceId || "").trim();
+      for (const item of options || []) {
+        if (raw === String(item.value ?? "").trim()) return String(item.label ?? item.value ?? "");
+      }
+      return raw;
+    }
+
+    function normalizeVoiceLanguage(value) {
+      const raw = String(value || "").trim().toLowerCase();
+      if (!raw || raw === "auto" || raw === "default") return "auto";
+      if (["zh", "zh_cn", "cn", "chinese", "mandarin", "中文"].includes(raw)) return "zh";
+      if (["ja", "jp", "japanese", "日本語", "日语", "日語"].includes(raw)) return "ja";
+      if (["yue", "zh_yue", "cantonese", "粤语", "粵語"].includes(raw)) return "yue";
+      if (["en", "eng", "english", "英语", "英語"].includes(raw)) return "en";
+      return "auto";
+    }
+
+    function ensureVoiceVersion(name, voiceId) {
+      if (!name || !voiceId) return;
+      const versions = ensureMap("voice_id_versions");
+      if (!Array.isArray(versions[name])) versions[name] = [];
+      if (versions[name].some((item) => String(item.voice_id || "") === String(voiceId))) return;
+      versions[name].push({ voice_id: voiceId, source: "manual", created_at: Math.floor(Date.now() / 1000) });
+    }
+
+    function voiceOptionsForCharacter(name) {
+      const draft = currentDraft();
+      const versions = draft.voice_id_versions || {};
+      const selected = (draft.voice_id_map || {})[name] || "";
+      const options = [{ label: "使用默认保底 voice_id", value: "" }];
+      const seen = new Set([""]);
+      (versions[name] || []).forEach((item, index) => {
+        const voiceId = String(item.voice_id || "").trim();
+        if (!voiceId) return;
+        const importedName = String(item.imported_character_name || "").trim();
+        const labelName = importedName || name;
+        options.push({
+          label: `${labelName} / 版本 ${index + 1} / ${voiceId}`,
+          value: voiceId,
+        });
+        seen.add(voiceId);
+      });
+      if (selected && !seen.has(selected)) {
+        options.push({ label: `手动 / ${selected}`, value: selected });
+      }
+      return options;
+    }
+
+    function deriveSelectedCharacter(name) {
+      const draft = currentDraft();
+      const record = selectedCharacterRecord(name);
+      if (isGsv()) {
+        return {
+          name,
+          cardReferenceAudioPath: record.cardReferenceAudioPath || "",
+          gptSovitsProfile: { ...((draft.gpt_sovits_character_profiles || {})[name] || {}) },
+          voiceOptions: [],
+        };
+      }
+      return {
+        name,
+        cardReferenceAudioPath: record.cardReferenceAudioPath || "",
+        voiceId: (draft.voice_id_map || {})[name] || "",
+        voiceOptions: voiceOptionsForCharacter(name),
+        localReferenceAudio: (draft.local_reference_audio_map || {})[name] || "",
+        referenceAudioLanguage: normalizeVoiceLanguage((draft.reference_audio_language_map || {})[name] || "auto"),
+        referenceText: (draft.reference_text_map || {})[name] || "",
+      };
+    }
+
+    function renderToast(message = "", kind = "ok", visible = false) {
+      return `
+        <div class="toast-region" aria-live="polite" aria-atomic="true">
+          <div class="toast" data-kind="${h(kind)}" data-visible="${visible ? "true" : "false"}">${message ? String(message) : ""}</div>
+        </div>
+      `;
+    }
+
+    function setStatus(message, kind = "ok", options = {}) {
+      const el = document.querySelector(".toast");
+      if (!el) return;
+      if (toastTimer) {
+        window.clearTimeout(toastTimer);
+        toastTimer = 0;
+      }
+      const content = message ? String(message) : "就绪";
+      el.dataset.kind = kind;
+      el.dataset.visible = content ? "true" : "false";
+      el.innerHTML = content;
+      if (content && !(options.sticky || kind === "error")) {
+        toastTimer = window.setTimeout(() => {
+          el.dataset.visible = "false";
+          toastTimer = 0;
+        }, 4200);
+      }
+    }
+
+    async function loadPage() {
+      try {
+        const detail = await requestJson(`/api/plugins/${enc(pluginId)}/ui`);
+        const page = (detail.pages || []).find((item) => item.id === PAGE_ID);
+        if (!page || !page.values) throw new Error("Cloud TTS 页面未注册。");
+        snapshot = page.values;
+        ensureSelectedCloneDemo();
+        render();
+        setStatus(snapshot.status || "就绪");
+      } catch (err) {
+        renderError(err);
+      }
+    }
+
+    function serializeSnapshot(extra = {}) {
+      return JSON.parse(JSON.stringify({ ...snapshot, ...extra }));
+    }
+
+    async function saveNow(message = "插件设置已自动保存。") {
+      if (!snapshot) return;
+      clearTimeout(saveTimer);
+      if (saving) {
+        saveAgain = true;
+        return;
+      }
+      saving = true;
+      try {
+        await requestJson(`/api/plugins/${enc(pluginId)}/ui/${PAGE_ID}/config`, {
+          method: "POST",
+          body: { values: serializeSnapshot() },
+        });
+        setStatus(message, "ok");
+      } catch (err) {
+        setStatus(h(err.message || err), "error");
+      } finally {
+        saving = false;
+        if (saveAgain) {
+          saveAgain = false;
+          await saveNow(message);
+        }
+      }
+    }
+
+    function scheduleSave(message) {
+      clearTimeout(saveTimer);
+      saveTimer = window.setTimeout(() => saveNow(message), 420);
+    }
+
+    async function runAction(actionId, extra = {}, options = {}) {
+      if (!snapshot) return null;
+      if (options.saveFirst) {
+        await saveNow(options.saveMessage || "切换前已保存。");
+      }
+      setStatus(options.busyMessage || "正在处理...");
+      try {
+        const payload = serializeSnapshot(extra);
+        const res = await requestJson(`/api/plugins/${enc(pluginId)}/ui/${PAGE_ID}/actions/${enc(actionId)}`, {
+          method: "POST",
+          body: { values: payload },
+        });
+        const result = res.result || {};
+        if (actionId === "switch_provider") {
+          activeSection = "base";
+        }
+        if (result.demoRecord && result.demoRecord.id) {
+          selectedCloneDemoId = String(result.demoRecord.id || "");
+          if (actionId === "upload_voice" && isMiniMax()) {
+            activeSection = "voice";
+          }
+        }
+        if (result.values) {
+          snapshot = result.values;
+          normalizeActiveSection();
+          ensureSelectedCloneDemo();
+          render();
+        }
+        const status = result.status || snapshot.status || res.message || "操作已完成。";
+        setStatus(renderDownloadStatus(status, result), "ok");
+        return result;
+      } catch (err) {
+        setStatus(h(err.message || err), "error");
+        return null;
+      }
+    }
+
+    function renderDownloadStatus(status, result) {
+      if (result && result.downloadUrl) {
+        lastDownload = { url: result.downloadUrl, path: result.path || "" };
+        return `${h(status)} <a class="download-link" href="${h(result.downloadUrl)}" target="_blank" rel="noreferrer">下载 JSON</a>`;
+      }
+      return h(status);
+    }
+
+    function updateDraftField(key, value, message) {
+      currentDraft()[key] = key === "default_voice_id"
+        ? resolveVoiceValue(snapshot.defaultVoiceOptions || [], value)
+        : value;
+      if (key === "qwen_language_type") {
+        currentDraft().language_type = value;
+      }
+      scheduleSave(message);
+    }
+
+    function updateSelectedField(key, value, message) {
+      const name = selectedName();
+      if (!name) return;
+      if (key === "voiceId") {
+        const voiceValue = resolveVoiceValue((snapshot.selectedCharacter || {}).voiceOptions || [], value);
+        const map = ensureMap("voice_id_map");
+        if (voiceValue) {
+          map[name] = voiceValue;
+          ensureVoiceVersion(name, voiceValue);
+        } else {
+          delete map[name];
+        }
+      } else if (key === "localReferenceAudio") {
+        const map = ensureMap("local_reference_audio_map");
+        if (value) map[name] = value;
+        else delete map[name];
+      } else if (key === "referenceAudioLanguage") {
+        const map = ensureMap("reference_audio_language_map");
+        const normalized = normalizeVoiceLanguage(value);
+        if (normalized === "auto") delete map[name];
+        else map[name] = normalized;
+      } else if (key === "referenceText") {
+        const map = ensureMap("reference_text_map");
+        if (value) map[name] = value;
+        else delete map[name];
+      }
+      snapshot.selectedCharacter = deriveSelectedCharacter(name);
+      scheduleSave(message);
+    }
+
+    function updateGsvProfile(key, value, message) {
+      const name = selectedName();
+      if (!name) return;
+      const profiles = ensureMap("gpt_sovits_character_profiles");
+      const profile = { ...(profiles[name] || {}) };
+      if (value) profile[key] = value;
+      else delete profile[key];
+      if (Object.keys(profile).length) profiles[name] = profile;
+      else delete profiles[name];
+      snapshot.selectedCharacter = deriveSelectedCharacter(name);
+      scheduleSave(message);
+    }
+
+    function render() {
+      if (!snapshot) return;
+      normalizeActiveSection();
+      const provider = snapshot.provider;
+      const selected = snapshot.selectedCharacter || {};
+      const draft = currentDraft();
+      const template = snapshot.template || {};
+      app.innerHTML = `
+        <div class="topbar">
+          <div class="title">
+            <h1>Cloud TTS</h1>
+            <span class="provider-pill">${h(snapshot.providerLabel || provider)}</span>
+          </div>
+        </div>
+        <div class="setup-notice" role="note">请先前往“AI服务”配置页选择对应云端TTS，在附加配置中填写 BASE URL 和 APIKEY。</div>
+        <div class="tabs" role="tablist" aria-label="Cloud TTS Provider">
+          ${(snapshot.providers || []).map((item) => `
+            <button class="tab" type="button" role="tab" aria-selected="${item.value === provider}" data-provider="${h(item.value)}">
+              <strong>${h(item.label)}</strong>
+              <span>${h(item.description)}</span>
+            </button>
+          `).join("")}
+        </div>
+        ${renderSubTabs()}
+        <div class="content-grid">
+          ${renderActiveSection(draft, selected, template)}
+        </div>
+        ${browserState ? renderBrowserModal() : ""}
+        ${renderToast()}
+      `;
+      bindEvents();
+      if (lastDownload && document.querySelector(".download-link")) {
+        document.querySelector(".download-link").href = lastDownload.url;
+      }
+    }
+
+    function renderSubTabs() {
+      return `
+        <div class="subtabs" role="tablist" aria-label="Cloud TTS Settings Sections">
+          ${providerSections().map((item) => `
+            <button class="subtab" type="button" role="tab" aria-selected="${item.id === activeSection}" data-section="${h(item.id)}">
+              ${h(item.label)}
+            </button>
+          `).join("")}
+        </div>
+      `;
+    }
+
+    function renderActiveSection(draft, selected, template) {
+      if (activeSection === "voice") return renderCharacterPanel(selected, draft);
+      if (activeSection === "template" && isMiniMax()) return renderTemplatePanel(template);
+      return renderProviderPanel(draft);
+    }
+
+    function renderProviderPanel(draft) {
+      return `
+        <section class="panel">
+          <h2>基础配置 <span class="section-tag">${h(snapshot.providerLabel)}</span></h2>
+          <div class="stack">
+            <div class="field">
+              <label for="model">模型</label>
+              <select class="select" id="model" data-draft="model">
+                ${optionHtml(snapshot.modelOptions, draft.model)}
+              </select>
+            </div>
+            ${!isGsv() ? `
+              <div class="field">
+                <label for="defaultVoice">${h(voiceProviderName())} 默认 voice_id</label>
+                <input class="input" id="defaultVoice" list="defaultVoiceOptions" value="${h(displayVoiceLabel(snapshot.defaultVoiceOptions, draft.default_voice_id || ""))}" data-draft="default_voice_id" />
+                ${datalistHtml("defaultVoiceOptions", snapshot.defaultVoiceOptions)}
+              </div>
+            ` : ""}
+            ${isQwen() ? `
+              <div class="field">
+                <label for="qwenLanguage">合成语言</label>
+                <select class="select" id="qwenLanguage" data-draft="qwen_language_type">
+                  ${optionHtml(snapshot.qwenLanguageOptions, draft.qwen_language_type || draft.language_type || "Chinese")}
+                </select>
+              </div>
+            ` : ""}
+            ${isMiniMax() ? `
+              <div class="switch-row">
+                <span class="switch-copy">
+                  <span class="switch-title">提示词约束</span>
+                  <small>推荐打开，获得最完整的效果。</small>
+                </span>
+                <button class="toggle" type="button" aria-pressed="${!!draft.auto_prompt_constraint}" data-toggle="auto_prompt_constraint"></button>
+              </div>
+              <div class="switch-row">
+                <span class="switch-copy">
+                  <span class="switch-title">语气标签保护</span>
+                  <small>推荐打开，获得最完整的效果。</small>
+                </span>
+                <button class="toggle" type="button" aria-pressed="${draft.protect_translate_tone_tags !== false}" data-toggle="protect_translate_tone_tags"></button>
+              </div>
+            ` : ""}
+            ${isGsv() ? `
+              <div class="split">
+                <div class="field">
+                  <label for="gsvSplit">GSV 分句</label>
+                  <input class="input" id="gsvSplit" value="${h(draft.gpt_sovits_text_split_method || "cut5")}" data-draft="gpt_sovits_text_split_method" />
+                </div>
+                <div class="field">
+                  <label for="gsvMedia">GSV 格式</label>
+                  <select class="select" id="gsvMedia" data-draft="gpt_sovits_media_type">
+                    ${optionHtml(snapshot.gsvMediaTypes, draft.gpt_sovits_media_type || "wav")}
+                  </select>
+                </div>
+              </div>
+              <div class="split">
+                <div class="field">
+                  <label for="gsvSteps">GSV steps</label>
+                  <input class="input" id="gsvSteps" value="${h(draft.gpt_sovits_sample_steps || "32")}" data-draft="gpt_sovits_sample_steps" />
+                </div>
+                <div class="switch-row">
+                  <span>GSV 超采样</span>
+                  <button class="toggle" type="button" aria-pressed="${!!draft.gpt_sovits_super_sampling}" data-toggle="gpt_sovits_super_sampling"></button>
+                </div>
+              </div>
+            ` : ""}
+          </div>
+        </section>
+      `;
+    }
+
+    function renderCharacterPanel(selected, draft) {
+      const heading = isGsv() ? "角色路径" : "音色工作台";
+      const tag = isGsv()
+        ? selectedName() || "未选择"
+        : `${voiceProviderName()} · ${selectedName() || "未选择"}`;
+      return `
+        <section class="panel">
+          <h2>${h(heading)} <span class="section-tag">${h(tag)}</span></h2>
+          <div class="stack">
+            <div class="field">
+              <label for="character">角色</label>
+              <select class="select" id="character" data-character>
+                ${optionHtml((snapshot.characters || []).map((item) => ({ label: item.label, value: item.name })), selectedName())}
+              </select>
+            </div>
+            ${selected.cardReferenceAudioPath ? `<span class="path-chip">${h(selected.cardReferenceAudioPath)}</span>` : `<div class="empty">当前角色卡没有 refer_audio_path</div>`}
+            ${isGsv() ? renderGsvCharacterFields(selected) : renderVoiceCharacterFields(selected)}
+          </div>
+        </section>
+      `;
+    }
+
+    function renderVoiceCharacterFields(selected) {
+      return `
+        <div class="field">
+          <label for="characterVoice">${h(voiceProviderName())} 角色 voice_id</label>
+          <input class="input" id="characterVoice" list="characterVoiceOptions" value="${h(displayVoiceLabel(selected.voiceOptions, selected.voiceId || ""))}" data-selected="voiceId" />
+          ${datalistHtml("characterVoiceOptions", selected.voiceOptions)}
+        </div>
+        <div class="row">
+          <div class="field">
+            <label for="localReference">本地参考音频</label>
+            <input class="input" id="localReference" value="${h(selected.localReferenceAudio || "")}" data-selected="localReferenceAudio" />
+          </div>
+          <button class="btn ghost" type="button" data-browse="audio">浏览</button>
+        </div>
+        <div class="split">
+          <div class="field">
+            <label for="referenceLanguage">参考音频语言</label>
+            <select class="select" id="referenceLanguage" data-selected="referenceAudioLanguage">
+              ${optionHtml(snapshot.voiceLanguageOptions, selected.referenceAudioLanguage || "auto")}
+            </select>
+          </div>
+          <div class="field ${isMiniMax() ? "" : "hidden"}">
+            <label for="referenceText">试听文本</label>
+            <input class="input" id="referenceText" value="${h(selected.referenceText || "")}" data-selected="referenceText" />
+          </div>
+        </div>
+        <div class="btn-row">
+          <button class="btn primary" type="button" data-action="upload_voice">${h(voiceProviderName())} 上传复刻</button>
+          <button class="btn pink" type="button" data-browse="json">导入 JSON</button>
+          <button class="btn ghost" type="button" data-action="export_voice_id">导出 voice_id</button>
+          <button class="btn ghost" type="button" data-clear-local>清除参考音频</button>
+        </div>
+        ${isMiniMax() ? renderMiniMaxPlayer() : ""}
+      `;
+    }
+
+    function renderGsvCharacterFields(selected) {
+      const profile = selected.gptSovitsProfile || {};
+      return `
+        <div class="field">
+          <label for="gsvRef">GSV 参考音频</label>
+          <input class="input" id="gsvRef" value="${h(profile.ref_audio_path || "")}" data-gsv="ref_audio_path" />
+        </div>
+        <div class="field">
+          <label for="gsvGpt">GSV GPT 模型</label>
+          <input class="input" id="gsvGpt" value="${h(profile.gpt_weights_path || "")}" data-gsv="gpt_weights_path" />
+        </div>
+        <div class="field">
+          <label for="gsvSovits">GSV SoVITS 模型</label>
+          <input class="input" id="gsvSovits" value="${h(profile.sovits_weights_path || "")}" data-gsv="sovits_weights_path" />
+        </div>
+        <div class="field">
+          <label for="gsvPromptText">GSV 参考文本</label>
+          <input class="input" id="gsvPromptText" value="${h(profile.prompt_text || "")}" data-gsv="prompt_text" />
+        </div>
+        <div class="split">
+          <div class="field">
+            <label for="gsvPromptLang">GSV 参考语言</label>
+            <select class="select" id="gsvPromptLang" data-gsv="prompt_lang">
+              ${optionHtml(snapshot.gsvLanguageOptions, profile.prompt_lang || "auto")}
+            </select>
+          </div>
+          <div class="field">
+            <label for="gsvTextLang">GSV 文本语言</label>
+            <select class="select" id="gsvTextLang" data-gsv="text_lang">
+              ${optionHtml(snapshot.gsvLanguageOptions, profile.text_lang || "auto")}
+            </select>
+          </div>
+        </div>
+      `;
+    }
+
+    function renderTemplatePanel(template) {
+      return `
+        <section class="panel">
+          <h2>提示词模板 <span class="section-tag">${h(template.language || "")}</span></h2>
+          <div class="stack">
+            <div class="field">
+              <label for="templateCharacter">模板角色</label>
+              <select class="select" id="templateCharacter" data-template-select="characterName">
+                ${optionHtml(template.characterOptions, template.characterName)}
+              </select>
+            </div>
+            <div class="field">
+              <label for="templateVersion">模板版本</label>
+              <select class="select" id="templateVersion" data-template-select="versionId">
+                ${optionHtml(template.versionOptions, template.versionId)}
+              </select>
+            </div>
+            <div class="field">
+              <label for="templateName">版本名称</label>
+              <input class="input" id="templateName" value="${h(template.versionName || "")}" data-template="versionName" />
+            </div>
+            <div class="field">
+              <label for="templateText">约束内容</label>
+              <textarea class="textarea" id="templateText" data-template="constraintText">${h(template.constraintText || "")}</textarea>
+            </div>
+            <div class="btn-row">
+              <button class="btn primary" type="button" data-action="save_template">保存模板</button>
+              <button class="btn danger" type="button" data-action="reset_template">重置默认</button>
+              <button class="btn ghost" type="button" data-action="create_template" ${template.isDefaultTemplate ? "disabled" : ""}>新建版本</button>
+              <button class="btn danger" type="button" data-action="delete_template" ${template.isDefaultTemplate ? "disabled" : ""}>删除版本</button>
+            </div>
+          </div>
+        </section>
+      `;
+    }
+
+    function renderMiniMaxPlayer() {
+      const demos = cloneDemoHistory();
+      const selected = ensureSelectedCloneDemo();
+      const src = selected ? downloadUrlForPath(selected.demo_audio_path) : "";
+      return `
+        <div class="field">
+          <label for="cloneDemoSelect">复刻试听</label>
+          ${src ? `
+            <select class="select" id="cloneDemoSelect" data-demo-select>
+              ${optionHtml(demos.map((item) => ({
+                label: item.label || `${item.character_name || "未命名"} / ${item.version_label || "版本 ?"} / ${item.demo_name || item.voice_id || "试听音色"}`,
+                value: item.id,
+              })), selectedCloneDemoId)}
+            </select>
+            <audio class="audio-player" controls preload="metadata" src="${h(src)}"></audio>
+            <span class="path-chip">${h(selected.demo_audio_path || "")}</span>
+            <span class="path-chip">${h(`voice_id: ${selected.voice_id || ""}`)}</span>
+            <div class="btn-row">
+              <a class="btn ghost" href="${h(src)}" target="_blank" rel="noreferrer">打开试听文件</a>
+            </div>
+          ` : `
+            <div class="empty">当前还没有可播放的复刻试听文件。上传复刻成功后会出现在这里。</div>
+          `}
+        </div>
+      `;
+    }
+
+    function renderProviderSidePanel() {
+      if (isQwen()) {
+        return `
+          <section class="panel">
+            <h2>Qwen3 TTS <span class="section-tag">DashScope</span></h2>
+            <div class="stack">
+              <div class="empty">Qwen 使用合成语言、voice_id 上传和本地参考音频绑定。</div>
+              <button class="btn pink" type="button" data-browse="json">导入 voice JSON</button>
+              <button class="btn ghost" type="button" data-action="export_voice_id">导出当前 voice_id</button>
+            </div>
+          </section>
+        `;
+      }
+      return `
+        <section class="panel">
+          <h2>GPT SoVITS Cloud <span class="section-tag">Server</span></h2>
+          <div class="stack">
+            <div class="empty">此 Provider 不做本地路径校验，也不上传本地 voice_id。</div>
+            <span class="path-chip">服务器参考音频和权重路径会随角色保存。</span>
+          </div>
+        </section>
+      `;
+    }
+
+    function renderBrowserModal() {
+      const snap = browserState.snapshot || {};
+      const selectedPath = browserState.selected || "";
+      const roots = snap.roots || [];
+      const entries = snap.entries || [];
+      return `
+        <div class="modal-backdrop">
+          <div class="modal" role="dialog" aria-modal="true">
+            <div class="modal-title">
+              <h3>${h(browserState.title || "选择文件")}</h3>
+              <button class="btn ghost" type="button" data-browser-close>关闭</button>
+            </div>
+            <div class="stack">
+              <div class="row">
+                <input class="input" value="${h(snap.cwd || browserState.path || "")}" data-browser-path />
+                <button class="btn primary" type="button" data-browser-go>打开</button>
+              </div>
+              <div class="browser-roots">
+                ${roots.map((root) => `<button class="btn ghost" type="button" data-browser-root="${h(root.path)}">${h(root.label)}</button>`).join("")}
+              </div>
+            </div>
+            <div class="browser-list">
+              ${snap.parent ? `<button class="browser-entry" type="button" data-browser-dir="${h(snap.parent)}"><span class="browser-kind">上级</span><span class="browser-name">${h(snap.parent)}</span><span></span></button>` : ""}
+              ${entries.map((entry) => `
+                <button class="browser-entry" type="button" data-browser-${entry.kind === "directory" ? "dir" : "file"}="${h(entry.path)}" aria-selected="${entry.path === selectedPath}">
+                  <span class="browser-kind">${entry.kind === "directory" ? "目录" : "文件"}</span>
+                  <span class="browser-name">${h(entry.name)}</span>
+                  <span>${entry.size ? h(formatSize(entry.size)) : ""}</span>
+                </button>
+              `).join("")}
+            </div>
+            <div class="btn-row">
+              <button class="btn primary" type="button" data-browser-confirm ${selectedPath ? "" : "disabled"}>选择</button>
+              <span class="path-chip">${h(selectedPath || "未选择文件")}</span>
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
+    function bindEvents() {
+      document.querySelectorAll("[data-provider]").forEach((button) => {
+        button.addEventListener("click", () => {
+          const next = button.getAttribute("data-provider");
+          if (!next || next === snapshot.provider) return;
+          runAction("switch_provider", { fromProvider: snapshot.provider, toProvider: next }, {
+            busyMessage: "正在切换 Provider...",
+          });
+        });
+      });
+      document.querySelectorAll("[data-section]").forEach((button) => {
+        button.addEventListener("click", () => {
+          const next = button.getAttribute("data-section");
+          if (!next) return;
+          activeSection = next;
+          render();
+          setStatus("已切换设置分类。");
+        });
+      });
+      document.querySelectorAll("[data-demo-select]").forEach((field) => {
+        field.addEventListener("change", () => {
+          selectedCloneDemoId = field.value;
+          render();
+          setStatus("已切换复刻试听记录。");
+        });
+      });
+      document.querySelectorAll("[data-draft]").forEach((field) => {
+        field.addEventListener("change", () => updateDraftField(field.dataset.draft, field.value, "字段已保存。"));
+        field.addEventListener("input", () => {
+          if (field.tagName === "INPUT" || field.tagName === "TEXTAREA") {
+            updateDraftField(field.dataset.draft, field.value, "字段已保存。");
+          }
+        });
+      });
+      document.querySelectorAll("[data-toggle]").forEach((button) => {
+        button.addEventListener("click", () => {
+          const key = button.dataset.toggle;
+          const next = !(currentDraft()[key] === true);
+          currentDraft()[key] = next;
+          button.setAttribute("aria-pressed", String(next));
+          scheduleSave("开关状态已保存。");
+        });
+      });
+      const characterSelect = document.querySelector("[data-character]");
+      if (characterSelect) {
+        characterSelect.addEventListener("change", () => {
+          snapshot.currentCharacter = characterSelect.value;
+          snapshot.selectedCharacter = deriveSelectedCharacter(characterSelect.value);
+          render();
+          setStatus("已切换角色视图。");
+        });
+      }
+      document.querySelectorAll("[data-selected]").forEach((field) => {
+        field.addEventListener("change", () => updateSelectedField(field.dataset.selected, field.value, "当前角色配置已保存。"));
+        field.addEventListener("input", () => {
+          if (field.tagName === "INPUT") updateSelectedField(field.dataset.selected, field.value, "当前角色配置已保存。");
+        });
+      });
+      document.querySelectorAll("[data-gsv]").forEach((field) => {
+        field.addEventListener("change", () => updateGsvProfile(field.dataset.gsv, field.value, "当前角色 GPT SoVITS Cloud 配置已保存。"));
+        field.addEventListener("input", () => {
+          if (field.tagName === "INPUT") updateGsvProfile(field.dataset.gsv, field.value, "当前角色 GPT SoVITS Cloud 配置已保存。");
+        });
+      });
+      document.querySelectorAll("[data-template]").forEach((field) => {
+        field.addEventListener("input", () => {
+          if (!snapshot.template) snapshot.template = {};
+          snapshot.template[field.dataset.template] = field.value;
+        });
+      });
+      document.querySelectorAll("[data-template-select]").forEach((field) => {
+        field.addEventListener("change", () => {
+          if (!snapshot.template) snapshot.template = {};
+          snapshot.template[field.dataset.templateSelect] = field.value;
+          runAction("select_template", {}, { busyMessage: "正在切换模板..." });
+        });
+      });
+      document.querySelectorAll("[data-action]").forEach((button) => {
+        button.addEventListener("click", () => {
+          const action = button.dataset.action;
+          if (action === "upload_voice") {
+            runAction(action, {}, { saveFirst: true, busyMessage: "正在上传参考音频..." });
+          } else if (action === "export_voice_id") {
+            runAction(action, {}, { saveFirst: true, busyMessage: "正在导出 voice_id..." });
+          } else {
+            runAction(action, {}, { busyMessage: "正在处理模板..." });
+          }
+        });
+      });
+      document.querySelectorAll("[data-browse]").forEach((button) => {
+        button.addEventListener("click", () => {
+          const mode = button.dataset.browse;
+          openBrowser(mode);
+        });
+      });
+      const clearLocal = document.querySelector("[data-clear-local]");
+      if (clearLocal) {
+        clearLocal.addEventListener("click", () => {
+          updateSelectedField("localReferenceAudio", "", "已清除当前角色的本地参考音频。");
+          snapshot.selectedCharacter = deriveSelectedCharacter(selectedName());
+          render();
+          setStatus("已清除当前角色的本地参考音频。");
+        });
+      }
+      bindBrowserEvents();
+    }
+
+    function bindBrowserEvents() {
+      if (!browserState) return;
+      const close = document.querySelector("[data-browser-close]");
+      if (close) close.addEventListener("click", () => { browserState = null; render(); });
+      const go = document.querySelector("[data-browser-go]");
+      const pathInput = document.querySelector("[data-browser-path]");
+      if (go && pathInput) go.addEventListener("click", () => browsePath(pathInput.value));
+      document.querySelectorAll("[data-browser-root]").forEach((button) => {
+        button.addEventListener("click", () => browsePath(button.dataset.browserRoot));
+      });
+      document.querySelectorAll("[data-browser-dir]").forEach((button) => {
+        button.addEventListener("click", () => browsePath(button.dataset.browserDir));
+      });
+      document.querySelectorAll("[data-browser-file]").forEach((button) => {
+        button.addEventListener("click", () => {
+          browserState.selected = button.dataset.browserFile;
+          render();
+        });
+      });
+      const confirm = document.querySelector("[data-browser-confirm]");
+      if (confirm) {
+        confirm.addEventListener("click", async () => {
+          const chosen = browserState.selected;
+          const mode = browserState.mode;
+          browserState = null;
+          render();
+          if (!chosen) return;
+          if (mode === "audio") {
+            updateSelectedField("localReferenceAudio", chosen, "已选择并保存本地参考音频。");
+            snapshot.selectedCharacter = deriveSelectedCharacter(selectedName());
+            render();
+            setStatus("已选择并保存本地参考音频。");
+          } else if (mode === "json") {
+            await runAction("import_voice_ids", { paths: [chosen] }, {
+              saveFirst: true,
+              busyMessage: "正在导入 voice JSON...",
+            });
+          }
+        });
+      }
+    }
+
+    async function openBrowser(mode) {
+      const selected = snapshot.selectedCharacter || {};
+      let start = selected.localReferenceAudio || selected.cardReferenceAudioPath || "";
+      if (mode === "json") start = "";
+      browserState = {
+        mode,
+        title: mode === "json" ? "导入 voice_id JSON" : "选择本地参考音频",
+        path: start,
+        selected: "",
+        snapshot: null,
+      };
+      await browsePath(start);
+    }
+
+    async function browsePath(path) {
+      if (!browserState) return;
+      try {
+        browserState.snapshot = await requestJson("/api/files/browse", {
+          method: "POST",
+          body: { path: path || "", showHidden: false },
+        });
+        browserState.path = browserState.snapshot.cwd || path || "";
+        browserState.selected = "";
+        render();
+      } catch (err) {
+        browserState = null;
+        render();
+        setStatus(h(err.message || err), "error");
+      }
+    }
+
+    function formatSize(size) {
+      const num = Number(size || 0);
+      if (num > 1024 * 1024) return `${(num / 1024 / 1024).toFixed(1)} MB`;
+      if (num > 1024) return `${(num / 1024).toFixed(1)} KB`;
+      return `${num} B`;
+    }
+
+    function renderError(err) {
+      app.innerHTML = `
+        <div class="topbar">
+          <div class="title">
+            <h1>Cloud TTS</h1>
+            <span class="provider-pill">Error</span>
+          </div>
+        </div>
+        <div class="setup-notice" role="note">请先前往“AI服务”配置页选择对应云端TTS，在附加配置中填写 BASE URL 和 APIKEY。</div>
+        ${renderToast(h(err.message || err), "error", true)}
+      `;
+    }
+
+    loadPage();
+  </script>
+</body>
+</html>

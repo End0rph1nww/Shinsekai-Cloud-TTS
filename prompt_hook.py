@@ -4,7 +4,7 @@ import json
 import sys
 from functools import wraps
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Mapping
 
 from plugins.cloud_tts import state
 
@@ -19,6 +19,12 @@ _TEMPLATE_GENERATE_ORIGINAL_ATTR = "_cloud_tts_original_on_generate"
 _TEMPLATE_GENERATE_HOOK_ATTR = "_cloud_tts_on_generate_hook"
 _TEXT_PROCESSOR_ORIGINAL_ATTR = "_cloud_tts_original_remove_parentheses"
 _TEXT_PROCESSOR_HOOK_ATTR = "_cloud_tts_remove_parentheses_hook"
+_FRONTEND_GENERATE_ORIGINAL_ATTR = "_cloud_tts_original_frontend_generate_template"
+_FRONTEND_GENERATE_HOOK_ATTR = "_cloud_tts_frontend_generate_template_hook"
+_FRONTEND_LOAD_SESSION_ORIGINAL_ATTR = "_cloud_tts_original_frontend_load_template_session"
+_FRONTEND_LOAD_SESSION_HOOK_ATTR = "_cloud_tts_frontend_load_template_session_hook"
+_FRONTEND_SAVE_SESSION_ORIGINAL_ATTR = "_cloud_tts_original_frontend_save_template_session"
+_FRONTEND_SAVE_SESSION_HOOK_ATTR = "_cloud_tts_frontend_save_template_session_hook"
 
 
 def _provider_wants_constraint(provider: str | None) -> bool:
@@ -42,6 +48,19 @@ def _selected_template_characters(template_tab: Any) -> list[str]:
     if not isinstance(raw, list):
         return []
     return [str(item).strip() for item in raw if str(item).strip()]
+
+
+def _template_tab_voice_language(template_tab: Any) -> str:
+    combo = getattr(template_tab, "voice_lang_combo", None)
+    getter = getattr(combo, "currentData", None)
+    if callable(getter):
+        try:
+            value = str(getter() or "").strip()
+        except Exception:
+            value = ""
+        if value:
+            return value
+    return "auto"
 
 
 def _looks_like_generated_template(text: str, selected_characters: list[str]) -> bool:
@@ -136,7 +155,12 @@ def _sync_template_session_file(template_tab: Any, provider: str | None) -> None
         if isinstance(selected, list)
         else []
     )
-    new = _sync_template_text(old, provider, selected_characters)
+    new = _sync_template_text(
+        old,
+        provider,
+        selected_characters,
+        payload.get("voice_lang") or payload.get("voiceLanguage") or "auto",
+    )
     if new == old:
         return
     payload["system_template_text"] = new
@@ -149,11 +173,17 @@ def _sync_template_session_file(template_tab: Any, provider: str | None) -> None
         return
 
 
-def _get_character_constraint_text(character_name: str) -> str | None:
-    """获取某个角色在当前主程序语音语言下的提示词约束文本。注入语言跟随主程序，不受设置页下拉框影响。"""
+def _get_character_constraint_text(
+    character_name: str,
+    voice_language: Any = "auto",
+) -> str | None:
+    """获取某个角色在指定语音语言下的提示词约束文本。"""
+    language = state.normalize_voice_language_code(voice_language)
+    if language == "auto":
+        language = state.current_system_voice_language()
     return state.get_character_constraint_text(
         character_name,
-        state.current_system_voice_language(),
+        language,
     )
 
 
@@ -161,6 +191,7 @@ def _sync_template_text(
     text: str,
     provider: str | None,
     selected_characters: list[str],
+    voice_language: Any = "auto",
 ) -> str:
     """核心注入逻辑：根据 provider 和开关状态，决定注入还是移除提示词约束块。"""
     old = text or ""
@@ -175,10 +206,10 @@ def _sync_template_text(
         # 还未生成模板或模板不完整 → 不注入
         return old
 
-    # 收集所有选中角色的约束文本（按当前语音语言）
+    # 收集所有选中角色的约束文本（按当前语音语言或前端即时选择的语言）
     constraint_texts: list[str] = []
     for name in selected_characters:
-        ct = _get_character_constraint_text(name)
+        ct = _get_character_constraint_text(name, voice_language)
         if ct:
             constraint_texts.append(ct)
 
@@ -203,9 +234,155 @@ def _sync_template_tab(template_tab: Any, provider: str | None) -> None:
 
     old = str(field.toPlainText() or "")
     selected_characters = _selected_template_characters(template_tab)
-    new = _sync_template_text(old, provider, selected_characters)
+    new = _sync_template_text(
+        old,
+        provider,
+        selected_characters,
+        _template_tab_voice_language(template_tab),
+    )
     if new != old:
         field.setPlainText(new)
+
+
+def _frontend_selected_characters(payload: Mapping[str, Any]) -> list[str]:
+    raw = payload.get("characters")
+    if raw is None:
+        raw = payload.get("selectedCharacters")
+    if not isinstance(raw, list):
+        return []
+    return [str(item).strip() for item in raw if str(item).strip()]
+
+
+def _compose_frontend_template_content(scenario: str, system: str) -> str:
+    a = (scenario or "").strip()
+    b = (system or "").strip()
+    if a and b:
+        return f"{a}\n\n{b}"
+    return a or b
+
+
+def _patch_frontend_bridge_templates() -> None:
+    """Hook React bridge template APIs so Web settings pages receive tone constraints."""
+    try:
+        from frontend_bridge_core import handler, templates
+    except Exception:
+        return
+
+    current_generate = getattr(handler, "_generate_template_summary", None)
+    if current_generate is None:
+        current_generate = getattr(templates, "_generate_template_summary", None)
+    if callable(current_generate) and not getattr(
+        current_generate,
+        _FRONTEND_GENERATE_HOOK_ATTR,
+        False,
+    ):
+
+        @wraps(current_generate)
+        def wrapped_generate(
+            bridge_state: Any,
+            payload: dict[str, Any],
+            *args: Any,
+            **kwargs: Any,
+        ) -> Any:
+            row = current_generate(bridge_state, payload, *args, **kwargs)
+            try:
+                if not isinstance(row, dict):
+                    return row
+                selected_characters = _frontend_selected_characters(payload)
+                system_text = str(row.get("system") or "")
+                synced = _sync_template_text(
+                    system_text,
+                    state.current_tts_provider(),
+                    selected_characters,
+                    payload.get("voiceLanguage") or "auto",
+                )
+                if synced == system_text:
+                    return row
+                updated = dict(row)
+                updated["system"] = synced
+                scenario = str(updated.get("scenario") or payload.get("scenario") or "")
+                updated["content"] = _compose_frontend_template_content(scenario, synced)
+                return updated
+            except Exception:
+                return row
+
+        setattr(wrapped_generate, _FRONTEND_GENERATE_HOOK_ATTR, True)
+        setattr(wrapped_generate, _FRONTEND_GENERATE_ORIGINAL_ATTR, current_generate)
+        handler._generate_template_summary = wrapped_generate
+        templates._generate_template_summary = wrapped_generate
+
+    current_load = getattr(handler, "_load_template_session_payload", None)
+    if current_load is None:
+        current_load = getattr(templates, "_load_template_session_payload", None)
+    if callable(current_load) and not getattr(
+        current_load,
+        _FRONTEND_LOAD_SESSION_HOOK_ATTR,
+        False,
+    ):
+
+        @wraps(current_load)
+        def wrapped_load(bridge_state: Any, *args: Any, **kwargs: Any) -> Any:
+            row = current_load(bridge_state, *args, **kwargs)
+            try:
+                if not isinstance(row, dict):
+                    return row
+                selected_characters = _frontend_selected_characters(row)
+                system_text = str(row.get("system") or "")
+                synced = _sync_template_text(
+                    system_text,
+                    state.current_tts_provider(),
+                    selected_characters,
+                    row.get("voiceLanguage") or "auto",
+                )
+                if synced == system_text:
+                    return row
+                updated = dict(row)
+                updated["system"] = synced
+                return updated
+            except Exception:
+                return row
+
+        setattr(wrapped_load, _FRONTEND_LOAD_SESSION_HOOK_ATTR, True)
+        setattr(wrapped_load, _FRONTEND_LOAD_SESSION_ORIGINAL_ATTR, current_load)
+        handler._load_template_session_payload = wrapped_load
+        templates._load_template_session_payload = wrapped_load
+
+    current_save = getattr(handler, "_save_template_session_payload", None)
+    if current_save is None:
+        current_save = getattr(templates, "_save_template_session_payload", None)
+    if callable(current_save) and not getattr(
+        current_save,
+        _FRONTEND_SAVE_SESSION_HOOK_ATTR,
+        False,
+    ):
+
+        @wraps(current_save)
+        def wrapped_save(
+            bridge_state: Any,
+            payload: dict[str, Any],
+            *args: Any,
+            **kwargs: Any,
+        ) -> Any:
+            try:
+                selected_characters = _frontend_selected_characters(payload)
+                system_text = str(payload.get("system") or "")
+                synced = _sync_template_text(
+                    system_text,
+                    state.current_tts_provider(),
+                    selected_characters,
+                    payload.get("voiceLanguage") or "auto",
+                )
+                if synced != system_text:
+                    payload = dict(payload)
+                    payload["system"] = synced
+            except Exception:
+                pass
+            return current_save(bridge_state, payload, *args, **kwargs)
+
+        setattr(wrapped_save, _FRONTEND_SAVE_SESSION_HOOK_ATTR, True)
+        setattr(wrapped_save, _FRONTEND_SAVE_SESSION_ORIGINAL_ATTR, current_save)
+        handler._save_template_session_payload = wrapped_save
+        templates._save_template_session_payload = wrapped_save
 
 
 def _sync_open_template_editor(api_tab: Any, provider: str | None) -> None:
@@ -330,11 +507,45 @@ def install() -> None:
     _patch_template_restore()             # Hook 2: 模板恢复后注入约束
     _patch_template_generate()            # Hook 3: 模板生成后注入约束
     _patch_text_processor()               # Hook 4: 保护语气标签不被括号清理删掉
+    _patch_frontend_bridge_templates()    # Hook 5: React 模板页生成/保存时同步约束
 
 
 def uninstall() -> None:
     """插件禁用时还原所有 monkey-patch，把被替换的方法恢复为原始版本。"""
     _unpatch_legacy_template_generator()
+    # 还原 React bridge 模板 API
+    try:
+        from frontend_bridge_core import handler, templates
+
+        for module in (handler, templates):
+            current_generate = getattr(module, "_generate_template_summary", None)
+            generate_original: Callable[..., Any] | None = getattr(
+                current_generate,
+                _FRONTEND_GENERATE_ORIGINAL_ATTR,
+                None,
+            )
+            if generate_original is not None:
+                module._generate_template_summary = generate_original
+
+            current_load = getattr(module, "_load_template_session_payload", None)
+            load_original: Callable[..., Any] | None = getattr(
+                current_load,
+                _FRONTEND_LOAD_SESSION_ORIGINAL_ATTR,
+                None,
+            )
+            if load_original is not None:
+                module._load_template_session_payload = load_original
+
+            current_save = getattr(module, "_save_template_session_payload", None)
+            save_original: Callable[..., Any] | None = getattr(
+                current_save,
+                _FRONTEND_SAVE_SESSION_ORIGINAL_ATTR,
+                None,
+            )
+            if save_original is not None:
+                module._save_template_session_payload = save_original
+    except Exception:
+        pass
     # 还原 TextProcessor.remove_parentheses
     try:
         from llm.text_processor import TextProcessor
