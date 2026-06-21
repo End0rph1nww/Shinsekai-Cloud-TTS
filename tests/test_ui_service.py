@@ -172,15 +172,15 @@ def test_frontend_page_registration(service_env):
     pages = registry.frontend_page_contributions
     configs = registry.frontend_config_contributions
     assert [page.page_id for page in pages] == ["cloud_tts"]
-    assert pages[0].entry.replace("\\", "/").endswith("frontend/index.html")
+    assert pages[0].entry.replace("\\", "/").endswith("plugins/cloud_tts/frontend/dist/index.html")
     assert configs[0].page_id == "cloud_tts"
     assert {action.id for action in configs[0].actions} >= {
-        "list_characters",
-        "bind_voice",
-        "upload_reference",
-        "clone_voice",
-        "export_voice",
-        "import_voice",
+        "switch_provider",
+        "import_voice_ids",
+        "export_voice_id",
+        "upload_voice",
+        "save_template",
+        "reset_template",
     }
 
 
